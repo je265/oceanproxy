@@ -302,8 +302,28 @@ build_and_install_oceanproxy() {
 install_config() {
     log_info "Installing configuration files..."
     
-    # Get the source directory (parent of parent of this script)
-    SOURCE_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
+    # Find the source directory (same logic as build function)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SOURCE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    
+    # Try to find go.mod to confirm correct source directory
+    if [[ -f "$(pwd)/go.mod" ]]; then
+        SOURCE_DIR="$(pwd)"
+    elif [[ -f "$SOURCE_DIR/go.mod" ]]; then
+        : # SOURCE_DIR is correct
+    else
+        # Search for go.mod in parent directories
+        CURRENT_DIR="$(pwd)"
+        while [[ "$CURRENT_DIR" != "/" ]]; do
+            if [[ -f "$CURRENT_DIR/go.mod" ]]; then
+                SOURCE_DIR="$CURRENT_DIR"
+                break
+            fi
+            CURRENT_DIR="$(dirname "$CURRENT_DIR")"
+        done
+    fi
+    
+    log_info "Using source directory: $SOURCE_DIR"
     
     # Copy main configuration
     if [[ -f "$SOURCE_DIR/configs/config.yaml" ]]; then
@@ -382,8 +402,26 @@ EOF
 install_systemd_service() {
     log_info "Installing systemd service..."
     
-    # Get the source directory
-    SOURCE_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
+    # Find the source directory (same logic as other functions)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SOURCE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    
+    # Try to find go.mod to confirm correct source directory
+    if [[ -f "$(pwd)/go.mod" ]]; then
+        SOURCE_DIR="$(pwd)"
+    elif [[ -f "$SOURCE_DIR/go.mod" ]]; then
+        : # SOURCE_DIR is correct
+    else
+        # Search for go.mod in parent directories
+        CURRENT_DIR="$(pwd)"
+        while [[ "$CURRENT_DIR" != "/" ]]; do
+            if [[ -f "$CURRENT_DIR/go.mod" ]]; then
+                SOURCE_DIR="$CURRENT_DIR"
+                break
+            fi
+            CURRENT_DIR="$(dirname "$CURRENT_DIR")"
+        done
+    fi
     
     if [[ -f "$SOURCE_DIR/deployments/systemd/oceanproxy.service" ]]; then
         cp "$SOURCE_DIR/deployments/systemd/oceanproxy.service" /etc/systemd/system/
