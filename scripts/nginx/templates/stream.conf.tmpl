@@ -1,0 +1,37 @@
+# OceanProxy nginx stream configuration for {{ .Region.Name }}
+# Generated automatically - do not edit manually
+# Region: {{ .Region.Description }}
+# Outbound Port: {{ .Region.OutboundPort }}
+
+{{- range .Upstreams }}
+
+# Upstream for {{ .PlanType }}
+upstream {{ .Name }} {
+    least_conn;
+    # Servers will be added dynamically by the application
+}
+{{- end }}
+
+# Main server block for {{ .Region.Name }}
+server {
+    listen {{ .Region.OutboundPort }};
+    
+    # Route to appropriate upstream based on plan type
+    # This will be handled by the load balancer logic
+    {{- range .Upstreams }}
+    # {{ .PlanType }} -> {{ .Name }}
+    {{- end }}
+    
+    # Default upstream (first one)
+    {{- if .Upstreams }}
+    proxy_pass {{ (index .Upstreams 0).Name }};
+    {{- end }}
+    
+    proxy_timeout 1s;
+    proxy_responses 1;
+    proxy_bind $remote_addr transparent;
+    
+    # Logging
+    error_log /var/log/nginx/oceanproxy_{{ .Region.Name }}_error.log;
+    access_log /var/log/nginx/oceanproxy_{{ .Region.Name }}_access.log;
+}

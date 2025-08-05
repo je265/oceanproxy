@@ -1,0 +1,52 @@
+# Region/Subdomain Configurations
+# Defines subdomains, their outbound ports, and associated plan types
+
+regions:
+  usa:
+    subdomain: usa
+    domain_suffix: oceanproxy.io
+    outbound_port: 1337
+    description: "United States proxies"
+    plan_types:
+      - proxies_fo_usa_residential
+      - proxies_fo_usa_datacenter
+    nginx_config_file: oceanproxy_usa.conf
+    
+  eu:
+    subdomain: eu
+    domain_suffix: oceanproxy.io
+    outbound_port: 1338
+    description: "European Union proxies"
+    plan_types:
+      - proxies_fo_eu_residential
+      - proxies_fo_eu_datacenter
+    nginx_config_file: oceanproxy_eu.conf
+    
+  alpha:
+    subdomain: alpha
+    domain_suffix: oceanproxy.io
+    outbound_port: 9876
+    description: "Alpha region proxies"
+    plan_types:
+      - nettify_alpha_residential
+      - nettify_alpha_mobile
+    nginx_config_file: oceanproxy_alpha.conf
+    
+  # Easy to add new regions
+  beta:
+    subdomain: beta
+    domain_suffix: oceanproxy.io
+    outbound_port: 7777
+    description: "Beta region proxies"
+    plan_types:
+      - newprovider_beta_premium
+    nginx_config_file: oceanproxy_beta.conf
+    
+  # Example: Asia region
+  asia:
+    subdomain: asia
+    domain_suffix: oceanproxy.io
+    outbound_port: 2337
+    description: "Asian proxies"
+    plan_types: []
+    nginx_config_file: oceanproxy_asia.conf

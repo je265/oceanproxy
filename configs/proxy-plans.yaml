@@ -1,0 +1,126 @@
+# Proxy Plan Type Configurations
+# Each plan type gets 2000 local ports for maximum scalability
+
+plan_types:
+  # Proxies.fo Plans - USA Region
+  proxies_fo_usa_residential:
+    provider: proxies_fo
+    region: usa
+    plan_type: residential
+    upstream_host: pr-us.proxies.fo
+    upstream_port: 13337
+    local_port_range:
+      start: 10000
+      end: 11999
+    outbound_port: 1337
+    nginx_upstream_name: oceanproxy_usa_residential
+    
+  proxies_fo_usa_datacenter:
+    provider: proxies_fo
+    region: usa
+    plan_type: datacenter
+    upstream_host: dcp.proxies.fo
+    upstream_port: 13338
+    local_port_range:
+      start: 12000
+      end: 13999
+    outbound_port: 1337
+    nginx_upstream_name: oceanproxy_usa_datacenter
+    
+  proxies_fo_usa_isp:
+    provider: proxies_fo
+    region: usa
+    plan_type: isp
+    upstream_host: pr-us.proxies.fo
+    upstream_port: 13337
+    local_port_range:
+      start: 14000
+      end: 15999
+    outbound_port: 1337
+    nginx_upstream_name: oceanproxy_usa_isp
+
+  # Proxies.fo Plans - EU Region
+  proxies_fo_eu_residential:
+    provider: proxies_fo
+    region: eu
+    plan_type: residential
+    upstream_host: pr-eu.proxies.fo
+    upstream_port: 13337
+    local_port_range:
+      start: 16000
+      end: 17999
+    outbound_port: 1338
+    nginx_upstream_name: oceanproxy_eu_residential
+    
+  proxies_fo_eu_datacenter:
+    provider: proxies_fo
+    region: eu
+    plan_type: datacenter
+    upstream_host: dcp.proxies.fo
+    upstream_port: 13338
+    local_port_range:
+      start: 18000
+      end: 19999
+    outbound_port: 1338
+    nginx_upstream_name: oceanproxy_eu_datacenter
+    
+  proxies_fo_eu_isp:
+    provider: proxies_fo
+    region: eu
+    plan_type: isp
+    upstream_host: pr-eu.proxies.fo
+    upstream_port: 13337
+    local_port_range:
+      start: 20000
+      end: 21999
+    outbound_port: 1338
+    nginx_upstream_name: oceanproxy_eu_isp
+
+  # Nettify Plans - Alpha Region
+  nettify_alpha_residential:
+    provider: nettify
+    region: alpha
+    plan_type: residential
+    upstream_host: proxy.nettify.xyz
+    upstream_port: 8080
+    local_port_range:
+      start: 22000
+      end: 23999
+    outbound_port: 9876
+    nginx_upstream_name: oceanproxy_alpha_residential
+    
+  nettify_alpha_datacenter:
+    provider: nettify
+    region: alpha
+    plan_type: datacenter
+    upstream_host: proxy.nettify.xyz
+    upstream_port: 8765
+    local_port_range:
+      start: 24000
+      end: 25999
+    outbound_port: 9876
+    nginx_upstream_name: oceanproxy_alpha_datacenter
+    
+  nettify_alpha_mobile:
+    provider: nettify
+    region: alpha
+    plan_type: mobile
+    upstream_host: proxy.nettify.xyz
+    upstream_port: 7654
+    local_port_range:
+      start: 26000
+      end: 27999
+    outbound_port: 9876
+    nginx_upstream_name: oceanproxy_alpha_mobile
+    
+  nettify_alpha_unlimited:
+    provider: nettify
+    region: alpha
+    plan_type: unlimited
+    upstream_host: proxy.nettify.xyz
+    upstream_port: 6543
+    local_port_range:
+      start: 28000
+      end: 29999
+    outbound_port: 9876
+    nginx_upstream_name: oceanproxy_alpha_unlimited
