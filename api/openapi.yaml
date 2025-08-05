@@ -1,0 +1,791 @@
+openapi: 3.0.3
+info:
+  title: OceanProxy API
+  description: |
+    White-label HTTP Proxy Service API
+    
+    OceanProxy provides a unified API for managing proxy plans across multiple upstream providers while presenting branded proxy endpoints to customers.
+    
+    ## Authentication
+    All API endpoints require Bearer token authentication:
+    ```
+    Authorization: Bearer your-api-token
+    ```
+    
+    ## Rate Limiting
+    API requests are rate limited to 60 requests per minute per IP address.
+    
+    ## Proxy Flow
+    1. Customer connects to branded domain: `http://user:pass@usa.oceanproxy.io:1337`
+    2. Nginx routes traffic to local 3proxy instance
+    3. 3proxy forwards to upstream provider
+    4. Response flows back through the same path
+    
+  version: 1.0.0
+  termsOfService: https://oceanproxy.io/terms
+  contact:
+    name: API Support
+    url: https://oceanproxy.io/support
+    email: support@oceanproxy.io
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.oceanproxy.io
+    description: Production server
+
+security:
+  - BearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns the health status of the service
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      summary: Readiness check
+      description: Returns detailed readiness status with component checks
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  /api/v1/plans:
+    get:
+      summary: List proxy plans
+      description: Get all proxy plans or filter by customer ID
+      tags:
+        - Plans
+      parameters:
+        - name: customer_id
+          in: query
+          description: Filter by customer ID
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by plan status
+          schema:
+            type: string
+            enum: [active, expired, suspended, creating, failed]
+        - name: provider
+          in: query
+          description: Filter by provider
+          schema:
+            type: string
+            enum: [proxies_fo, nettify]
+      responses:
+        '200':
+          description: List of proxy plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProxyPlan'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Create proxy plan
+      description: Create a new proxy plan with specified configuration
+      tags:
+        - Plans
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlanRequest'
+      responses:
+        '201':
+          description: Plan created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePlanResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token authentication
+
+  schemas:
+    CreatePlanRequest:
+      type: object
+      required:
+        - customer_id
+        - plan_type
+        - provider
+        - region
+        - username
+        - password
+      properties:
+        customer_id:
+          type: string
+          description: Customer identifier
+          example: "customer_123"
+        plan_type:
+          type: string
+          enum: [residential, datacenter, isp, mobile, unlimited]
+          description: Type of proxy plan
+          example: "residential"
+        provider:
+          type: string
+          enum: [proxies_fo, nettify]
+          description: Upstream proxy provider
+          example: "proxies_fo"
+        region:
+          type: string
+          enum: [usa, eu, alpha, beta, asia]
+          description: Geographic region
+          example: "usa"
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          description: Proxy authentication username
+          example: "testuser"
+        password:
+          type: string
+          minLength: 6
+          maxLength: 100
+          description: Proxy authentication password
+          example: "testpass"
+        bandwidth:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Bandwidth limit in GB
+          example: 10
+        duration:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Plan duration in days
+          example: 30
+
+    CreatePlanResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        plan_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        username:
+          type: string
+          example: "testuser"
+        password:
+          type: string
+          example: "testpass"
+        expires_at:
+          type: string
+          format: date-time
+          example: "2024-02-15T10:30:00Z"
+        proxies:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProxyEndpoint'
+
+    ProxyPlan:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        customer_id:
+          type: string
+          example: "customer_123"
+        plan_type:
+          type: string
+          enum: [residential, datacenter, isp, mobile, unlimited]
+          example: "residential"
+        provider:
+          type: string
+          enum: [proxies_fo, nettify]
+          example: "proxies_fo"
+        region:
+          type: string
+          enum: [usa, eu, alpha, beta, asia]
+          example: "usa"
+        plan_type_key:
+          type: string
+          example: "proxies_fo_usa_residential"
+        username:
+          type: string
+          example: "testuser"
+        password:
+          type: string
+          example: "testpass"
+        status:
+          type: string
+          enum: [active, expired, suspended, creating, failed]
+          example: "active"
+        bandwidth:
+          type: integer
+          example: 10
+        expires_at:
+          type: string
+          format: date-time
+          example: "2024-02-15T10:30:00Z"
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProxyInstance'
+
+    ProxyInstance:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "456e7890-e89b-12d3-a456-426614174001"
+        plan_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        plan_type_key:
+          type: string
+          example: "proxies_fo_usa_residential"
+        local_port:
+          type: integer
+          example: 10001
+        auth_host:
+          type: string
+          example: "pr-us.proxies.fo"
+        auth_port:
+          type: integer
+          example: 13337
+        status:
+          type: string
+          enum: [running, stopped, failed, starting]
+          example: "running"
+        process_id:
+          type: integer
+          example: 12345
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
+    ProxyEndpoint:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          example: "http://testuser:testpass@usa.oceanproxy.io:1337"
+        region:
+          type: string
+          example: "usa"
+        username:
+          type: string
+          example: "testuser"
+        password:
+          type: string
+          example: "testpass"
+
+    ActionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Operation completed successfully"
+        instance_id:
+          type: string
+          format: uuid
+          example: "456e7890-e89b-12d3-a456-426614174001"
+        status:
+          type: string
+          example: "running"
+
+    InstanceStatus:
+      type: object
+      properties:
+        instance_id:
+          type: string
+          format: uuid
+          example: "456e7890-e89b-12d3-a456-426614174001"
+        status:
+          type: string
+          enum: [running, stopped, failed, starting]
+          example: "running"
+        healthy:
+          type: boolean
+          example: true
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        health_error:
+          type: string
+          example: "Connection timeout"
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        version:
+          type: string
+          example: "1.0.0"
+        uptime:
+          type: string
+          example: "24h30m15s"
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+          example: "ready"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        checks:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CheckResult'
+
+    CheckResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          example: "healthy"
+        message:
+          type: string
+          example: "Database connection OK"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        request_id:
+          type: string
+          example: "req_123456789"
+
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "INVALID_INPUT"
+        message:
+          type: string
+          example: "Invalid request parameters"
+        details:
+          type: string
+          example: "Username must be at least 3 characters long"
+        type:
+          type: string
+          enum: [validation_error, authentication_error, authorization_error, not_found, conflict, internal_error, bad_request, rate_limit_exceeded, service_unavailable]
+          example: "validation_error"
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "INVALID_INPUT"
+              message: "Invalid request parameters"
+              type: "validation_error"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Resource not found"
+              type: "not_found"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An internal error occurred"
+              type: "internal_error"
+            timestamp: "2024-01-15T10:30:00Z"
+
+tags:
+  - name: Health
+    description: Health and readiness checks
+  - name: Plans
+    description: Proxy plan management
+  - name: Proxies
+    description: Proxy instance management  
+  - name: Legacy
+    description: Legacy API endpoints for backward compatibilityjson:
+              schema:
+                $ref: '#/components/schemas/CreatePlanResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/plans/{id}:
+    get:
+      summary: Get proxy plan
+      description: Get a specific proxy plan by ID
+      tags:
+        - Plans
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Plan ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Proxy plan details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyPlan'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete proxy plan
+      description: Delete a proxy plan and all associated instances
+      tags:
+        - Plans
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Plan ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Plan deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/proxies:
+    get:
+      summary: List proxy instances
+      description: Get all proxy instances with optional filtering
+      tags:
+        - Proxies
+      parameters:
+        - name: status
+          in: query
+          description: Filter by instance status
+          schema:
+            type: string
+            enum: [running, stopped, failed, starting]
+        - name: plan_id
+          in: query
+          description: Filter by plan ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of proxy instances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProxyInstance'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/proxies/{id}:
+    get:
+      summary: Get proxy instance
+      description: Get a specific proxy instance by ID
+      tags:
+        - Proxies
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Instance ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Proxy instance details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyInstance'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/proxies/{id}/start:
+    post:
+      summary: Start proxy instance
+      description: Start a specific proxy instance
+      tags:
+        - Proxies
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Instance ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Instance started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/proxies/{id}/stop:
+    post:
+      summary: Stop proxy instance
+      description: Stop a specific proxy instance
+      tags:
+        - Proxies
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Instance ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Instance stopped successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/proxies/{id}/restart:
+    post:
+      summary: Restart proxy instance
+      description: Restart a specific proxy instance
+      tags:
+        - Proxies
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Instance ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Instance restarted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/proxies/{id}/status:
+    get:
+      summary: Get proxy instance status
+      description: Get the current status of a proxy instance
+      tags:
+        - Proxies
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Instance ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Instance status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # Legacy endpoints for backward compatibility
+  /plan:
+    post:
+      summary: Create Proxies.fo plan (Legacy)
+      description: Legacy endpoint for creating Proxies.fo plans
+      tags:
+        - Legacy
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                reseller:
+                  type: string
+                  enum: [residential, datacenter, isp]
+                bandwidth:
+                  type: integer
+                  minimum: 1
+                username:
+                  type: string
+                password:
+                  type: string
+                customer_id:
+                  type: string
+              required:
+                - reseller
+                - bandwidth
+                - username
+                - password
+      responses:
+        '201':
+          description: Plan created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePlanResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /nettify/plan:
+    post:
+      summary: Create Nettify plan (Legacy)
+      description: Legacy endpoint for creating Nettify plans
+      tags:
+        - Legacy
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                plan_type:
+                  type: string
+                  enum: [residential, datacenter, mobile, unlimited]
+                bandwidth:
+                  type: integer
+                  minimum: 1
+                username:
+                  type: string
+                password:
+                  type: string
+                customer_id:
+                  type: string
+              required:
+                - plan_type
+                - bandwidth
+                - username
+                - password
+      responses:
+        '201':
+          description: Plan created successfully
+          content:
+            application/

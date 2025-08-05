@@ -1,0 +1,220 @@
+version: '3.8'
+
+services:
+  oceanproxy:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile
+    container_name: oceanproxy-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "1337:1337"
+      - "1338:1338"
+      - "9876:9876"
+      - "10000-11999:10000-11999"  # USA Residential
+      - "12000-13999:12000-13999"  # USA Datacenter
+      - "14000-15999:14000-15999"  # USA ISP
+      - "16000-17999:16000-17999"  # EU Residential
+      - "18000-19999:18000-19999"  # EU Datacenter  
+      - "20000-21999:20000-21999"  # EU ISP
+      - "22000-29999:22000-29999"  # Alpha region ports
+    environment:
+      - ENVIRONMENT=production
+      - BEARER_TOKEN=${BEARER_TOKEN:-your-secure-token}
+      - JWT_SECRET=${JWT_SECRET:-your-jwt-secret}
+      - PROXIES_FO_API_KEY=${PROXIES_FO_API_KEY}
+      - NETTIFY_API_KEY=${NETTIFY_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+    volumes:
+      - oceanproxy-logs:/var/log/oceanproxy
+      - oceanproxy-config:/etc/3proxy
+      - nginx-config:/etc/nginx/conf.d
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - oceanproxy-network
+    depends_on:
+      - redis
+      - nginx
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  nginx:
+    image: nginx:alpine
+    container_name: oceanproxy-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-config:/etc/nginx/conf.d
+      - nginx-logs:/var/log/nginx
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    networks:
+      - oceanproxy-network
+    depends_on:
+      - oceanproxy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: oceanproxy-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - oceanproxy-network
+    command: redis-server /etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: oceanproxy-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - oceanproxy-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: oceanproxy-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - oceanproxy-network
+    depends_on:
+      - prometheus
+
+  loki:
+    image: grafana/loki:latest
+    container_name: oceanproxy-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - oceanproxy-network
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: oceanproxy-promtail
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - oceanproxy-logs:/var/log/oceanproxy:ro
+      - nginx-logs:/var/log/nginx:ro
+    networks:
+      - oceanproxy-network
+    depends_on:
+      - loki
+    command: -config.file=/etc/promtail/config.yml
+
+  # Database (optional - for when moving from JSON to SQL)
+  postgres:
+    image: postgres:15-alpine
+    container_name: oceanproxy-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-oceanproxy}
+      - POSTGRES_USER=${POSTGRES_USER:-oceanproxy}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - oceanproxy-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-oceanproxy} -d ${POSTGRES_DB:-oceanproxy}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - postgres
+
+  # Backup service
+  backup:
+    image: alpine:latest
+    container_name: oceanproxy-backup
+    restart: "no"
+    volumes:
+      - oceanproxy-logs:/var/log/oceanproxy:ro
+      - postgres-data:/var/lib/postgresql/data:ro
+      - ./backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+    networks:
+      - oceanproxy-network
+    depends_on:
+      - oceanproxy
+      - postgres
+    command: /bin/sh -c "apk add --no-cache postgresql-client && /usr/local/bin/backup.sh"
+    profiles:
+      - backup
+
+networks:
+  oceanproxy-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  oceanproxy-logs:
+    driver: local
+  oceanproxy-config:
+    driver: local
+  nginx-config:
+    driver: local
+  nginx-logs:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  loki-data:
+    driver: local
+  postgres-data:
+    driver: local
