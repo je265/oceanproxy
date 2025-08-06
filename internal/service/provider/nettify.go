@@ -1,3 +1,4 @@
+// internal/service/provider/nettify.go - FIXED
 package provider
 
 import (
@@ -13,7 +14,6 @@ import (
 
 	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/domain"
-	"github.com/je265/oceanproxy/internal/service"
 )
 
 type NettifyProvider struct {
@@ -52,7 +52,7 @@ type NettifyPlanDetails struct {
 	LastUsed  string `json:"last_used"`
 }
 
-func (n *NettifyProvider) CreateAccount(ctx context.Context, req *domain.CreatePlanRequest) (*service.ProviderAccount, error) {
+func (n *NettifyProvider) CreateAccount(ctx context.Context, req *domain.CreatePlanRequest) (*ProviderAccount, error) {
 	n.logger.Info("Creating Nettify account",
 		zap.String("customer_id", req.CustomerID),
 		zap.String("plan_type", req.PlanType),
@@ -146,7 +146,7 @@ func (n *NettifyProvider) CreateAccount(ctx context.Context, req *domain.CreateP
 	// Determine upstream configuration based on plan type
 	upstreamHost, upstreamPort := n.getUpstreamConfig(req.PlanType)
 
-	account := &service.ProviderAccount{
+	account := &ProviderAccount{
 		ID:       result.PlanID,
 		Username: details.Username,
 		Password: details.Password,
@@ -209,7 +209,7 @@ func (n *NettifyProvider) getUpstreamConfig(planType string) (string, int) {
 	}
 }
 
-func (n *NettifyProvider) GetAccountInfo(ctx context.Context, accountID string) (*service.ProviderAccount, error) {
+func (n *NettifyProvider) GetAccountInfo(ctx context.Context, accountID string) (*ProviderAccount, error) {
 	details, err := n.getPlanDetails(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -217,7 +217,7 @@ func (n *NettifyProvider) GetAccountInfo(ctx context.Context, accountID string) 
 
 	upstreamHost, upstreamPort := n.getUpstreamConfig(details.PlanType)
 
-	return &service.ProviderAccount{
+	return &ProviderAccount{
 		ID:       details.PlanID,
 		Username: details.Username,
 		Password: details.Password,
@@ -232,7 +232,7 @@ func (n *NettifyProvider) DeleteAccount(ctx context.Context, accountID string) e
 	return fmt.Errorf("DeleteAccount not implemented for Nettify")
 }
 
-func (n *NettifyProvider) TestConnection(ctx context.Context, account *service.ProviderAccount) error {
+func (n *NettifyProvider) TestConnection(ctx context.Context, account *ProviderAccount) error {
 	// Test the proxy connection
 	proxyURL := fmt.Sprintf("http://%s:%s@%s:%d",
 		account.Username, account.Password, account.Host, account.Port)

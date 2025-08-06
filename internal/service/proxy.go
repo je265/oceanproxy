@@ -1,3 +1,4 @@
+// internal/service/proxy.go - COMPLETE FIX
 package service
 
 import (
@@ -21,17 +22,20 @@ type proxyService struct {
 	cfg          *config.Config
 	logger       *zap.Logger
 	instanceRepo repository.InstanceRepository
+	planRepo     repository.PlanRepository
 }
 
 func NewProxyService(
 	cfg *config.Config,
 	logger *zap.Logger,
 	instanceRepo repository.InstanceRepository,
+	planRepo repository.PlanRepository,
 ) ProxyService {
 	return &proxyService{
 		cfg:          cfg,
 		logger:       logger,
 		instanceRepo: instanceRepo,
+		planRepo:     planRepo,
 	}
 }
 
@@ -49,8 +53,14 @@ func (s *proxyService) StartInstance(ctx context.Context, instance *domain.Proxy
 			zap.Error(err))
 	}
 
+	// Get plan details for authentication
+	plan, err := s.planRepo.GetByID(ctx, instance.PlanID)
+	if err != nil {
+		return fmt.Errorf("failed to get plan for instance: %w", err)
+	}
+
 	// Create 3proxy configuration file
-	configPath, err := s.create3ProxyConfig(instance)
+	configPath, err := s.create3ProxyConfig(instance, plan.Username, plan.Password)
 	if err != nil {
 		return fmt.Errorf("failed to create 3proxy config: %w", err)
 	}
@@ -87,7 +97,7 @@ func (s *proxyService) StartInstance(ctx context.Context, instance *domain.Proxy
 	// Test the proxy connection
 	go func() {
 		time.Sleep(2 * time.Second)
-		if err := s.testProxyConnection(instance); err != nil {
+		if err := s.testProxyConnection(instance, plan.Username, plan.Password); err != nil {
 			s.logger.Error("Proxy connection test failed",
 				zap.String("instance_id", instance.ID.String()),
 				zap.Error(err))
@@ -215,8 +225,14 @@ func (s *proxyService) HealthCheck(ctx context.Context, instanceID uuid.UUID) er
 		return fmt.Errorf("process not running")
 	}
 
+	// Get plan for authentication details
+	plan, err := s.planRepo.GetByID(ctx, instance.PlanID)
+	if err != nil {
+		return fmt.Errorf("failed to get plan for health check: %w", err)
+	}
+
 	// Test proxy connection
-	return s.testProxyConnection(instance)
+	return s.testProxyConnection(instance, plan.Username, plan.Password)
 }
 
 func (s *proxyService) GetInstance(ctx context.Context, instanceID uuid.UUID) (*domain.ProxyInstance, error) {
@@ -229,14 +245,8 @@ func (s *proxyService) GetInstancesByPlan(ctx context.Context, planID uuid.UUID)
 
 // Helper methods
 
-func (s *proxyService) create3ProxyConfig(instance *domain.ProxyInstance) (string, error) {
+func (s *proxyService) create3ProxyConfig(instance *domain.ProxyInstance, username, password string) (string, error) {
 	configPath := s.getConfigPath(instance.ID.String())
-
-	// Get plan details for username/password
-	// Note: In a real implementation, you'd get this from the plan repository
-	// For now, using placeholder values
-	username := "user" // This should come from the associated plan
-	password := "pass" // This should come from the associated plan
 
 	configContent := fmt.Sprintf(`# 3proxy configuration for instance %s
 # Generated on %s
@@ -336,7 +346,7 @@ func (s *proxyService) isProcessRunning(pid int) bool {
 	return true
 }
 
-func (s *proxyService) testProxyConnection(instance *domain.ProxyInstance) error {
+func (s *proxyService) testProxyConnection(instance *domain.ProxyInstance, username, password string) error {
 	// Test the proxy by making a simple HTTP request through it
 	// This is a placeholder implementation
 	s.logger.Debug("Testing proxy connection",

@@ -1,3 +1,4 @@
+// internal/repository/interfaces.go - Complete repository interfaces
 package repository
 
 import (

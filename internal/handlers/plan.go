@@ -1,11 +1,13 @@
+// internal/handlers/plan.go
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
@@ -38,22 +40,22 @@ func NewPlanHandler(planService service.PlanService, logger *zap.Logger) *PlanHa
 // @Failure 500 {object} errors.ErrorResponse
 // @Security BearerAuth
 // @Router /plans [post]
-func (h *PlanHandler) CreatePlan(c *gin.Context) {
+func (h *PlanHandler) CreatePlan(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreatePlanRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Error("Invalid request body", zap.Error(err))
-		c.JSON(http.StatusBadRequest, errors.NewErrorResponse("Invalid request body", err))
+		h.respondWithError(w, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
-	response, err := h.planService.CreatePlan(c.Request.Context(), &req)
+	response, err := h.planService.CreatePlan(r.Context(), &req)
 	if err != nil {
 		h.logger.Error("Failed to create plan", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errors.NewErrorResponse("Failed to create plan", err))
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to create plan", err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, response)
+	h.respondWithJSON(w, http.StatusCreated, response)
 }
 
 // GetPlan retrieves a specific proxy plan
@@ -67,22 +69,22 @@ func (h *PlanHandler) CreatePlan(c *gin.Context) {
 // @Failure 404 {object} errors.ErrorResponse
 // @Security BearerAuth
 // @Router /plans/{id} [get]
-func (h *PlanHandler) GetPlan(c *gin.Context) {
-	planIDStr := c.Param("id")
+func (h *PlanHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
+	planIDStr := chi.URLParam(r, "id")
 	planID, err := uuid.Parse(planIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errors.NewErrorResponse("Invalid plan ID", err))
+		h.respondWithError(w, http.StatusBadRequest, "Invalid plan ID", err)
 		return
 	}
 
-	plan, err := h.planService.GetPlan(c.Request.Context(), planID)
+	plan, err := h.planService.GetPlan(r.Context(), planID)
 	if err != nil {
 		h.logger.Error("Failed to get plan", zap.Error(err))
-		c.JSON(http.StatusNotFound, errors.NewErrorResponse("Plan not found", err))
+		h.respondWithError(w, http.StatusNotFound, "Plan not found", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, plan)
+	h.respondWithJSON(w, http.StatusOK, plan)
 }
 
 // GetPlans retrieves all proxy plans or plans for a specific customer
@@ -95,25 +97,25 @@ func (h *PlanHandler) GetPlan(c *gin.Context) {
 // @Failure 500 {object} errors.ErrorResponse
 // @Security BearerAuth
 // @Router /plans [get]
-func (h *PlanHandler) GetPlans(c *gin.Context) {
-	customerID := c.Query("customer_id")
+func (h *PlanHandler) GetPlans(w http.ResponseWriter, r *http.Request) {
+	customerID := r.URL.Query().Get("customer_id")
 
 	var plans []*domain.ProxyPlan
 	var err error
 
 	if customerID != "" {
-		plans, err = h.planService.GetPlansByCustomer(c.Request.Context(), customerID)
+		plans, err = h.planService.GetPlansByCustomer(r.Context(), customerID)
 	} else {
-		plans, err = h.planService.GetAllPlans(c.Request.Context())
+		plans, err = h.planService.GetAllPlans(r.Context())
 	}
 
 	if err != nil {
 		h.logger.Error("Failed to get plans", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errors.NewErrorResponse("Failed to get plans", err))
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to get plans", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, plans)
+	h.respondWithJSON(w, http.StatusOK, plans)
 }
 
 // DeletePlan deletes a proxy plan
@@ -126,21 +128,21 @@ func (h *PlanHandler) GetPlans(c *gin.Context) {
 // @Failure 404 {object} errors.ErrorResponse
 // @Security BearerAuth
 // @Router /plans/{id} [delete]
-func (h *PlanHandler) DeletePlan(c *gin.Context) {
-	planIDStr := c.Param("id")
+func (h *PlanHandler) DeletePlan(w http.ResponseWriter, r *http.Request) {
+	planIDStr := chi.URLParam(r, "id")
 	planID, err := uuid.Parse(planIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errors.NewErrorResponse("Invalid plan ID", err))
+		h.respondWithError(w, http.StatusBadRequest, "Invalid plan ID", err)
 		return
 	}
 
-	if err := h.planService.DeletePlan(c.Request.Context(), planID); err != nil {
+	if err := h.planService.DeletePlan(r.Context(), planID); err != nil {
 		h.logger.Error("Failed to delete plan", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errors.NewErrorResponse("Failed to delete plan", err))
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to delete plan", err)
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // CreateProxiesFoPlan creates a plan using Proxies.fo provider (legacy endpoint)
@@ -158,34 +160,41 @@ func (h *PlanHandler) DeletePlan(c *gin.Context) {
 // @Failure 500 {object} errors.ErrorResponse
 // @Security BearerAuth
 // @Router /plan [post]
-func (h *PlanHandler) CreateProxiesFoPlan(c *gin.Context) {
+func (h *PlanHandler) CreateProxiesFoPlan(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.respondWithError(w, http.StatusBadRequest, "Failed to parse form", err)
+		return
+	}
+
+	customerID := r.FormValue("customer_id")
+	if customerID == "" {
+		customerID = "legacy_customer_" + strconv.FormatInt(time.Now().Unix(), 10)
+	}
+
 	req := domain.CreatePlanRequest{
-		CustomerID: c.PostForm("customer_id"),
-		PlanType:   c.PostForm("reseller"),
+		CustomerID: customerID,
+		PlanType:   r.FormValue("reseller"),
 		Provider:   domain.ProviderProxiesFo,
-		Username:   c.PostForm("username"),
-		Password:   c.PostForm("password"),
+		Region:     domain.RegionUSA, // Default to USA for legacy
+		Username:   r.FormValue("username"),
+		Password:   r.FormValue("password"),
 	}
 
-	if req.CustomerID == "" {
-		req.CustomerID = "legacy_customer_" + strconv.FormatInt(time.Now().Unix(), 10)
-	}
-
-	bandwidth, err := strconv.Atoi(c.PostForm("bandwidth"))
+	bandwidth, err := strconv.Atoi(r.FormValue("bandwidth"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errors.NewErrorResponse("Invalid bandwidth", err))
+		h.respondWithError(w, http.StatusBadRequest, "Invalid bandwidth", err)
 		return
 	}
 	req.Bandwidth = bandwidth
 
-	response, err := h.planService.CreatePlan(c.Request.Context(), &req)
+	response, err := h.planService.CreatePlan(r.Context(), &req)
 	if err != nil {
 		h.logger.Error("Failed to create Proxies.fo plan", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errors.NewErrorResponse("Failed to create plan", err))
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to create plan", err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, response)
+	h.respondWithJSON(w, http.StatusCreated, response)
 }
 
 // CreateNettifyPlan creates a plan using Nettify provider (legacy endpoint)
@@ -203,32 +212,69 @@ func (h *PlanHandler) CreateProxiesFoPlan(c *gin.Context) {
 // @Failure 500 {object} errors.ErrorResponse
 // @Security BearerAuth
 // @Router /nettify/plan [post]
-func (h *PlanHandler) CreateNettifyPlan(c *gin.Context) {
+func (h *PlanHandler) CreateNettifyPlan(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.respondWithError(w, http.StatusBadRequest, "Failed to parse form", err)
+		return
+	}
+
+	customerID := r.FormValue("customer_id")
+	if customerID == "" {
+		customerID = "legacy_customer_" + strconv.FormatInt(time.Now().Unix(), 10)
+	}
+
 	req := domain.CreatePlanRequest{
-		CustomerID: c.PostForm("customer_id"),
-		PlanType:   c.PostForm("plan_type"),
+		CustomerID: customerID,
+		PlanType:   r.FormValue("plan_type"),
 		Provider:   domain.ProviderNettify,
-		Username:   c.PostForm("username"),
-		Password:   c.PostForm("password"),
+		Region:     domain.RegionAlpha, // Default to Alpha for Nettify
+		Username:   r.FormValue("username"),
+		Password:   r.FormValue("password"),
 	}
 
-	if req.CustomerID == "" {
-		req.CustomerID = "legacy_customer_" + strconv.FormatInt(time.Now().Unix(), 10)
-	}
-
-	bandwidth, err := strconv.Atoi(c.PostForm("bandwidth"))
+	bandwidth, err := strconv.Atoi(r.FormValue("bandwidth"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errors.NewErrorResponse("Invalid bandwidth", err))
+		h.respondWithError(w, http.StatusBadRequest, "Invalid bandwidth", err)
 		return
 	}
 	req.Bandwidth = bandwidth
 
-	response, err := h.planService.CreatePlan(c.Request.Context(), &req)
+	response, err := h.planService.CreatePlan(r.Context(), &req)
 	if err != nil {
 		h.logger.Error("Failed to create Nettify plan", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errors.NewErrorResponse("Failed to create plan", err))
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to create plan", err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, response)
+	h.respondWithJSON(w, http.StatusCreated, response)
+}
+
+// GetStats returns statistics about plans
+func (h *PlanHandler) GetStats(w http.ResponseWriter, r *http.Request) {
+	// This would be implemented to return plan statistics
+	// For now, return placeholder data
+	stats := map[string]interface{}{
+		"total_plans":    0,
+		"active_plans":   0,
+		"expired_plans":  0,
+		"failed_plans":   0,
+		"creating_plans": 0,
+	}
+
+	h.respondWithJSON(w, http.StatusOK, stats)
+}
+
+// Helper methods
+func (h *PlanHandler) respondWithJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		h.logger.Error("Failed to encode JSON response", zap.Error(err))
+	}
+}
+
+func (h *PlanHandler) respondWithError(w http.ResponseWriter, statusCode int, message string, err error) {
+	errorResponse := errors.NewErrorResponse(message, err)
+	h.respondWithJSON(w, statusCode, errorResponse)
 }

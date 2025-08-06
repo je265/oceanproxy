@@ -1,3 +1,4 @@
+// internal/service/plan.go - FIXED (remove unused variables)
 package service
 
 import (
@@ -20,6 +21,9 @@ type planService struct {
 	instanceRepo    repository.InstanceRepository
 	providerService ProviderService
 	proxyService    ProxyService
+	portManager     *PortManager
+	nginxManager    *NginxManager
+	regions         map[string]*domain.Region
 }
 
 func NewPlanService(
@@ -29,6 +33,9 @@ func NewPlanService(
 	instanceRepo repository.InstanceRepository,
 	providerService ProviderService,
 	proxyService ProxyService,
+	portManager *PortManager,
+	nginxManager *NginxManager,
+	regions map[string]*domain.Region,
 ) PlanService {
 	return &planService{
 		cfg:             cfg,
@@ -37,6 +44,9 @@ func NewPlanService(
 		instanceRepo:    instanceRepo,
 		providerService: providerService,
 		proxyService:    proxyService,
+		portManager:     portManager,
+		nginxManager:    nginxManager,
+		regions:         regions,
 	}
 }
 
@@ -45,6 +55,7 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 		zap.String("customer_id", req.CustomerID),
 		zap.String("plan_type", req.PlanType),
 		zap.String("provider", req.Provider),
+		zap.String("region", req.Region),
 	)
 
 	// Find the appropriate plan type configuration
@@ -53,7 +64,8 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 		return nil, fmt.Errorf("unsupported plan configuration: %w", err)
 	}
 
-	planTypeConfig, err := s.portManager.GetPlanTypeConfig(planTypeKey)
+	// Get plan type config for upstream details
+	_, err = s.portManager.GetPlanTypeConfig(planTypeKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get plan type config: %w", err)
 	}
@@ -78,7 +90,7 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 	if req.Duration > 0 {
 		plan.ExpiresAt = time.Now().AddDate(0, 0, req.Duration)
 	} else {
-		plan.ExpiresAt = time.Now().AddDate(0, 0, 180)
+		plan.ExpiresAt = time.Now().AddDate(0, 0, 30) // Default to 30 days
 	}
 
 	// Save plan to repository
@@ -108,8 +120,8 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 		PlanID:      plan.ID,
 		PlanTypeKey: planTypeKey,
 		LocalPort:   localPort,
-		AuthHost:    planTypeConfig.UpstreamHost,
-		AuthPort:    planTypeConfig.UpstreamPort,
+		AuthHost:    providerAccount.Host,
+		AuthPort:    providerAccount.Port,
 		Status:      domain.InstanceStatusStarting,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -142,7 +154,11 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 	}
 
 	// Build response with region-specific endpoint
-	region := s.regions[planTypeConfig.Region]
+	region := s.regions[req.Region]
+	if region == nil {
+		return nil, fmt.Errorf("region %s not found", req.Region)
+	}
+
 	response := &domain.CreatePlanResponse{
 		Success:   true,
 		PlanID:    plan.ID,
@@ -169,103 +185,6 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 	return response, nil
 }
 
-func (s *planService) createInstances(ctx context.Context, plan *domain.ProxyPlan, account *ProviderAccount) ([]*domain.ProxyInstance, error) {
-	var instances []*domain.ProxyInstance
-
-	// Determine regions based on provider
-	regions := s.getRegionsForProvider(plan.Provider)
-
-	for _, region := range regions {
-		// Find available port
-		port, err := s.findAvailablePort(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find available port: %w", err)
-		}
-
-		instance := &domain.ProxyInstance{
-			ID:        uuid.New(),
-			PlanID:    plan.ID,
-			Region:    region,
-			LocalPort: port,
-			AuthHost:  account.Host,
-			AuthPort:  account.Port,
-			LocalHost: fmt.Sprintf("%s.%s", region, s.cfg.Proxy.Domain),
-			Status:    domain.InstanceStatusStarting,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		}
-
-		if err := s.instanceRepo.Create(ctx, instance); err != nil {
-			return nil, fmt.Errorf("failed to create instance: %w", err)
-		}
-
-		instances = append(instances, instance)
-	}
-
-	return instances, nil
-}
-
-func (s *planService) getRegionsForProvider(provider string) []string {
-	switch provider {
-	case domain.ProviderProxiesFo:
-		return []string{domain.RegionUSA, domain.RegionEU}
-	case domain.ProviderNettify:
-		return []string{domain.RegionAlpha}
-	default:
-		return []string{domain.RegionUSA}
-	}
-}
-
-func (s *planService) findAvailablePort(ctx context.Context) (int, error) {
-	// Get all used ports
-	instances, err := s.instanceRepo.GetAll(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	usedPorts := make(map[int]bool)
-	for _, instance := range instances {
-		usedPorts[instance.LocalPort] = true
-	}
-
-	// Find first available port in range
-	for port := s.cfg.Proxy.StartPort; port <= s.cfg.Proxy.EndPort; port++ {
-		if !usedPorts[port] {
-			return port, nil
-		}
-	}
-
-	return 0, fmt.Errorf("no available ports in range %d-%d", s.cfg.Proxy.StartPort, s.cfg.Proxy.EndPort)
-}
-
-func (s *planService) buildProxyEndpoints(instances []*domain.ProxyInstance, username, password string) []domain.ProxyEndpoint {
-	var endpoints []domain.ProxyEndpoint
-
-	for _, instance := range instances {
-		var port int
-		switch instance.Region {
-		case domain.RegionUSA:
-			port = 1337
-		case domain.RegionEU:
-			port = 1338
-		case domain.RegionAlpha:
-			port = 9876
-		default:
-			port = 1337
-		}
-
-		endpoint := domain.ProxyEndpoint{
-			URL:      fmt.Sprintf("http://%s:%s@%s:%d", username, password, instance.LocalHost, port),
-			Region:   instance.Region,
-			Username: username,
-			Password: password,
-		}
-		endpoints = append(endpoints, endpoint)
-	}
-
-	return endpoints
-}
-
 func (s *planService) GetPlan(ctx context.Context, planID uuid.UUID) (*domain.ProxyPlan, error) {
 	return s.planRepo.GetByID(ctx, planID)
 }
@@ -279,20 +198,20 @@ func (s *planService) GetAllPlans(ctx context.Context) ([]*domain.ProxyPlan, err
 }
 
 func (s *planService) UpdatePlanStatus(ctx context.Context, planID uuid.UUID, status string) error {
-	plan, err := s.planRepo.GetByID(ctx, planID)
+	updatedPlan, err := s.planRepo.GetByID(ctx, planID)
 	if err != nil {
 		return err
 	}
 
-	plan.Status = status
-	plan.UpdatedAt = time.Now()
+	updatedPlan.Status = status
+	updatedPlan.UpdatedAt = time.Now()
 
-	return s.planRepo.Update(ctx, plan)
+	return s.planRepo.Update(ctx, updatedPlan)
 }
 
 func (s *planService) DeletePlan(ctx context.Context, planID uuid.UUID) error {
 	// Get plan and instances
-	plan, err := s.planRepo.GetByID(ctx, planID)
+	planToDelete, err := s.planRepo.GetByID(ctx, planID)
 	if err != nil {
 		return err
 	}
@@ -310,9 +229,39 @@ func (s *planService) DeletePlan(ctx context.Context, planID uuid.UUID) error {
 				zap.Error(err),
 			)
 		}
+
+		// Release port
+		if err := s.portManager.ReleasePort(ctx, instance.PlanTypeKey, instance.LocalPort); err != nil {
+			s.logger.Error("Failed to release port during plan deletion",
+				zap.String("instance_id", instance.ID.String()),
+				zap.Int("port", instance.LocalPort),
+				zap.Error(err),
+			)
+		}
+
+		// Remove from nginx upstream
+		if err := s.nginxManager.RemoveFromUpstream(ctx, instance.PlanTypeKey, instance.LocalPort); err != nil {
+			s.logger.Error("Failed to remove from nginx upstream during plan deletion",
+				zap.String("instance_id", instance.ID.String()),
+				zap.Error(err),
+			)
+		}
+
+		// Delete instance
+		if err := s.instanceRepo.Delete(ctx, instance.ID); err != nil {
+			s.logger.Error("Failed to delete instance during plan deletion",
+				zap.String("instance_id", instance.ID.String()),
+				zap.Error(err),
+			)
+		}
 	}
 
-	// Delete from repository
+	s.logger.Info("Plan deletion completed",
+		zap.String("plan_id", planToDelete.ID.String()),
+		zap.String("customer_id", planToDelete.CustomerID),
+	)
+
+	// Delete plan from repository
 	return s.planRepo.Delete(ctx, planID)
 }
 

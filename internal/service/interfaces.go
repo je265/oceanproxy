@@ -1,3 +1,4 @@
+// internal/service/interfaces.go - FIXED
 package service
 
 import (
@@ -25,6 +26,8 @@ type ProxyService interface {
 	RestartInstance(ctx context.Context, instanceID uuid.UUID) error
 	GetInstanceStatus(ctx context.Context, instanceID uuid.UUID) (string, error)
 	GetRunningInstances(ctx context.Context) ([]*domain.ProxyInstance, error)
+	GetInstance(ctx context.Context, instanceID uuid.UUID) (*domain.ProxyInstance, error)
+	GetInstancesByPlan(ctx context.Context, planID uuid.UUID) ([]*domain.ProxyInstance, error)
 	HealthCheck(ctx context.Context, instanceID uuid.UUID) error
 }
 
@@ -44,4 +47,12 @@ type ProviderAccount struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
 	Region   string `json:"region"`
+}
+
+// PoolStats represents statistics for a port pool
+type PoolStats struct {
+	PlanType       string `json:"plan_type"`
+	TotalPorts     int    `json:"total_ports"`
+	AllocatedPorts int    `json:"allocated_ports"`
+	AvailablePorts int    `json:"available_ports"`
 }

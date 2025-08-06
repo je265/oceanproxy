@@ -1,18 +1,21 @@
+// internal/app/app.go - FIXED (remove unused variables)
 package app
 
 import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 
 	"github.com/je265/oceanproxy/internal/config"
+	"github.com/je265/oceanproxy/internal/domain"
 	"github.com/je265/oceanproxy/internal/handlers"
-	"github.com/je265/oceanproxy/internal/pkg/logger"
 	"github.com/je265/oceanproxy/internal/repository/json"
 	"github.com/je265/oceanproxy/internal/service"
 )
@@ -36,10 +39,6 @@ func New(cfg *config.Config, log *zap.Logger) (*App, error) {
 	planRepo := json.NewPlanRepository(cfg.Database.DSN, log)
 	instanceRepo := json.NewInstanceRepository(cfg.Database.DSN, log)
 
-	// Initialize services
-	providerService := service.NewProviderService(cfg, log)
-	proxyService := service.NewProxyService(cfg, log)
-
 	// Load plan type configurations
 	planTypes, err := loadPlanTypeConfigs()
 	if err != nil {
@@ -51,6 +50,12 @@ func New(cfg *config.Config, log *zap.Logger) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load region configs: %w", err)
 	}
+
+	// Initialize services
+	providerService := service.NewProviderService(cfg, log)
+
+	// Initialize proxy service with repositories
+	proxyService := service.NewProxyService(cfg, log, instanceRepo, planRepo)
 
 	// Initialize port manager
 	portManager := service.NewPortManager(log, planTypes)
@@ -178,6 +183,7 @@ func (a *App) setupRouter(
 			r.Post("/{id}/start", proxyHandler.StartProxy)
 			r.Post("/{id}/stop", proxyHandler.StopProxy)
 			r.Post("/{id}/restart", proxyHandler.RestartProxy)
+			r.Get("/{id}/status", proxyHandler.GetProxyStatus)
 		})
 
 		// Statistics
@@ -200,13 +206,128 @@ func (a *App) setupRouter(
 
 // Helper functions to load configurations
 func loadPlanTypeConfigs() (map[string]*domain.PlanTypeConfig, error) {
-	// This would typically load from proxy-plans.yaml
-	// For now, returning empty map - implement yaml loading
-	return make(map[string]*domain.PlanTypeConfig), nil
+	// Load from proxy-plans.yaml file
+	data, err := os.ReadFile("configs/proxy-plans.yaml")
+	if err != nil {
+		// Return default configuration if file doesn't exist
+		return getDefaultPlanTypes(), nil
+	}
+
+	var config struct {
+		PlanTypes map[string]*domain.PlanTypeConfig `yaml:"plan_types"`
+	}
+
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse proxy-plans.yaml: %w", err)
+	}
+
+	return config.PlanTypes, nil
 }
 
 func loadRegionConfigs() (map[string]*domain.Region, error) {
-	// This would typically load from regions.yaml
-	// For now, returning empty map - implement yaml loading
-	return make(map[string]*domain.Region), nil
+	// Load from regions.yaml file
+	data, err := os.ReadFile("configs/regions.yaml")
+	if err != nil {
+		// Return default configuration if file doesn't exist
+		return getDefaultRegions(), nil
+	}
+
+	var config struct {
+		Regions map[string]*domain.Region `yaml:"regions"`
+	}
+
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse regions.yaml: %w", err)
+	}
+
+	return config.Regions, nil
+}
+
+// Default configurations
+func getDefaultPlanTypes() map[string]*domain.PlanTypeConfig {
+	return map[string]*domain.PlanTypeConfig{
+		"proxies_fo_usa_residential": {
+			Name:         "proxies_fo_usa_residential",
+			Provider:     "proxies_fo",
+			Region:       "usa",
+			PlanType:     "residential",
+			UpstreamHost: "pr-us.proxies.fo",
+			UpstreamPort: 13337,
+			LocalPortRange: domain.PortRange{
+				Start: 10000,
+				End:   11999,
+			},
+			OutboundPort:      1337,
+			NginxUpstreamName: "oceanproxy_usa_residential",
+		},
+		"proxies_fo_usa_datacenter": {
+			Name:         "proxies_fo_usa_datacenter",
+			Provider:     "proxies_fo",
+			Region:       "usa",
+			PlanType:     "datacenter",
+			UpstreamHost: "dcp.proxies.fo",
+			UpstreamPort: 13338,
+			LocalPortRange: domain.PortRange{
+				Start: 12000,
+				End:   13999,
+			},
+			OutboundPort:      1337,
+			NginxUpstreamName: "oceanproxy_usa_datacenter",
+		},
+		"nettify_alpha_residential": {
+			Name:         "nettify_alpha_residential",
+			Provider:     "nettify",
+			Region:       "alpha",
+			PlanType:     "residential",
+			UpstreamHost: "proxy.nettify.xyz",
+			UpstreamPort: 8080,
+			LocalPortRange: domain.PortRange{
+				Start: 22000,
+				End:   23999,
+			},
+			OutboundPort:      9876,
+			NginxUpstreamName: "oceanproxy_alpha_residential",
+		},
+	}
+}
+
+func getDefaultRegions() map[string]*domain.Region {
+	return map[string]*domain.Region{
+		"usa": {
+			Name:         "usa",
+			Subdomain:    "usa",
+			DomainSuffix: "oceanproxy.io",
+			OutboundPort: 1337,
+			Description:  "United States proxies",
+			PlanTypes: []string{
+				"proxies_fo_usa_residential",
+				"proxies_fo_usa_datacenter",
+			},
+			NginxConfigFile: "oceanproxy_usa.conf",
+		},
+		"eu": {
+			Name:         "eu",
+			Subdomain:    "eu",
+			DomainSuffix: "oceanproxy.io",
+			OutboundPort: 1338,
+			Description:  "European Union proxies",
+			PlanTypes: []string{
+				"proxies_fo_eu_residential",
+				"proxies_fo_eu_datacenter",
+			},
+			NginxConfigFile: "oceanproxy_eu.conf",
+		},
+		"alpha": {
+			Name:         "alpha",
+			Subdomain:    "alpha",
+			DomainSuffix: "oceanproxy.io",
+			OutboundPort: 9876,
+			Description:  "Alpha region proxies",
+			PlanTypes: []string{
+				"nettify_alpha_residential",
+				"nettify_alpha_mobile",
+			},
+			NginxConfigFile: "oceanproxy_alpha.conf",
+		},
+	}
 }

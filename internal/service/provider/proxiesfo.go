@@ -1,3 +1,4 @@
+// internal/service/provider/proxiesfo.go - FIXED
 package provider
 
 import (
@@ -14,7 +15,6 @@ import (
 
 	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/domain"
-	"github.com/je265/oceanproxy/internal/service"
 )
 
 type ProxiesFoProvider struct {
@@ -49,7 +49,7 @@ type ProxiesFoData struct {
 	EndsDate     float64 `json:"EndsDate"`
 }
 
-func (p *ProxiesFoProvider) CreateAccount(ctx context.Context, req *domain.CreatePlanRequest) (*service.ProviderAccount, error) {
+func (p *ProxiesFoProvider) CreateAccount(ctx context.Context, req *domain.CreatePlanRequest) (*ProviderAccount, error) {
 	p.logger.Info("Creating Proxies.fo account",
 		zap.String("customer_id", req.CustomerID),
 		zap.String("plan_type", req.PlanType),
@@ -142,7 +142,7 @@ func (p *ProxiesFoProvider) CreateAccount(ctx context.Context, req *domain.Creat
 		}
 	}
 
-	account := &service.ProviderAccount{
+	account := &ProviderAccount{
 		ID:       result.Data.ID,
 		Username: result.Data.AuthUsername,
 		Password: result.Data.AuthPassword,
@@ -161,7 +161,7 @@ func (p *ProxiesFoProvider) CreateAccount(ctx context.Context, req *domain.Creat
 	return account, nil
 }
 
-func (p *ProxiesFoProvider) GetAccountInfo(ctx context.Context, accountID string) (*service.ProviderAccount, error) {
+func (p *ProxiesFoProvider) GetAccountInfo(ctx context.Context, accountID string) (*ProviderAccount, error) {
 	// Implementation for getting account info
 	// This would typically involve another API call to get account details
 	return nil, fmt.Errorf("GetAccountInfo not implemented for Proxies.fo")
@@ -173,7 +173,7 @@ func (p *ProxiesFoProvider) DeleteAccount(ctx context.Context, accountID string)
 	return fmt.Errorf("DeleteAccount not implemented for Proxies.fo")
 }
 
-func (p *ProxiesFoProvider) TestConnection(ctx context.Context, account *service.ProviderAccount) error {
+func (p *ProxiesFoProvider) TestConnection(ctx context.Context, account *ProviderAccount) error {
 	// Test the proxy connection
 	proxyURL := fmt.Sprintf("http://%s:%s@%s:%d",
 		account.Username, account.Password, account.Host, account.Port)

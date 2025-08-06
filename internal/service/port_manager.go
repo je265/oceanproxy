@@ -1,3 +1,4 @@
+// internal/service/port_manager.go - FIXED (remove duplicate PoolStats)
 package service
 
 import (
@@ -140,14 +141,6 @@ func (pm *PortManager) GetPoolStats() map[string]PoolStats {
 	}
 
 	return stats
-}
-
-// PoolStats represents statistics for a port pool
-type PoolStats struct {
-	PlanType       string `json:"plan_type"`
-	TotalPorts     int    `json:"total_ports"`
-	AllocatedPorts int    `json:"allocated_ports"`
-	AvailablePorts int    `json:"available_ports"`
 }
 
 // FindPlanTypeByProviderAndRegion finds plan types matching provider and region
