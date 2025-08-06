@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# OceanProxy Installation Script - Fixed Version
-# This script installs OceanProxy on Ubuntu/Debian systems
+# OceanProxy Installation Script - COMPLETE STRUCTURAL IMPLEMENTATION
+# This script installs OceanProxy with proper nginx stream configuration
 
 set -euo pipefail
 
@@ -88,72 +88,80 @@ install_basic_dependencies() {
         postgresql-client \
         logrotate \
         fail2ban \
-        software-properties-common
+        software-properties-common \
+        apt-transport-https
     
     log_success "Basic dependencies installed"
 }
 
-# Install nginx with stream module
+# Install nginx with stream module - FIXED VERSION
 install_nginx() {
     log_info "Installing nginx with stream module..."
     
-    # Install nginx
+    # Remove any existing nginx installation
+    systemctl stop nginx 2>/dev/null || true
+    apt-get remove -y nginx nginx-common nginx-core nginx-full 2>/dev/null || true
+    
+    # Add official nginx repository
+    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/nginx-keyring.gpg] https://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" > /etc/apt/sources.list.d/nginx.list
+    
+    # Set repository preferences
+    cat > /etc/apt/preferences.d/99nginx << 'EOF'
+Package: *
+Pin: origin nginx.org
+Pin: release o=nginx
+Pin-Priority: 900
+EOF
+    
+    apt-get update
     apt-get install -y nginx
     
-    # Check if stream module is available
-    if nginx -V 2>&1 | grep -q "stream"; then
-        log_success "Nginx with stream module already available"
+    # Verify stream module is available
+    if nginx -V 2>&1 | grep -q "with-stream"; then
+        log_success "Nginx installed with stream module"
     else
-        log_info "Installing nginx with additional modules..."
-        
-        # Add official nginx repository for full-featured nginx
-        curl -fsSL https://nginx.org/keys/nginx_signing.key | apt-key add -
-        echo "deb https://nginx.org/packages/ubuntu/ $(lsb_release -cs) nginx" > /etc/apt/sources.list.d/nginx.list
-        
-        apt-get update
-        apt-get install -y nginx-module-stream 2>/dev/null || {
-            log_warning "nginx-module-stream not available via package manager"
-            log_info "Using default nginx installation (stream module may need manual compilation)"
-        }
+        log_error "Nginx does not have stream module - this is required for OceanProxy"
+        exit 1
     fi
     
     # Enable and start nginx
     systemctl enable nginx
     systemctl start nginx
     
-    log_success "Nginx installed"
+    log_success "Nginx with stream module installed"
 }
 
-# Install 3proxy from source
+# Install 3proxy from source - IMPROVED VERSION
 install_3proxy() {
     log_info "Installing 3proxy from source..."
     
     # Check if 3proxy is already installed
     if command -v 3proxy &> /dev/null; then
-        log_info "3proxy already installed: $(3proxy --version 2>&1 | head -1)"
+        log_info "3proxy already installed: $(3proxy 2>&1 | head -1 || echo 'version unknown')"
         return
     fi
     
     # Install build dependencies
     apt-get install -y build-essential
     
-    # Download and build 3proxy
-    cd /tmp
+    # Create temporary directory
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
     
-    # Try different download methods
-    if ! wget https://github.com/z3APA3A/3proxy/archive/0.9.4.tar.gz; then
-        log_info "GitHub download failed, trying alternative..."
-        if ! wget https://3proxy.org/0.9.4/3proxy-0.9.4.tar.gz; then
-            log_error "Could not download 3proxy source"
-            exit 1
-        fi
+    # Download 3proxy source
+    log_info "Downloading 3proxy source..."
+    if ! wget -q https://github.com/3proxy/3proxy/archive/0.9.4.tar.gz -O 3proxy.tar.gz; then
+        log_error "Failed to download 3proxy source"
+        exit 1
     fi
     
     # Extract and build
-    tar -xzf 3proxy-0.9.4.tar.gz 2>/dev/null || tar -xzf 0.9.4.tar.gz
-    cd 3proxy-0.9.4 || cd 3proxy-*
+    tar -xzf 3proxy.tar.gz
+    cd 3proxy-0.9.4
     
     # Build 3proxy
+    log_info "Building 3proxy..."
     make -f Makefile.Linux
     
     # Install binary
@@ -165,9 +173,9 @@ install_3proxy() {
     
     # Clean up
     cd /
-    rm -rf /tmp/3proxy-* /tmp/0.9.4.tar.gz
+    rm -rf "$TEMP_DIR"
     
-    log_success "3proxy installed: $(/usr/local/bin/3proxy --version 2>&1 | head -1)"
+    log_success "3proxy installed: $(/usr/local/bin/3proxy 2>&1 | head -1 || echo 'installed')"
 }
 
 # Create system user and directories
@@ -264,12 +272,11 @@ build_and_install_oceanproxy() {
     export PATH=$PATH:/usr/local/go/bin
     export GOPATH=$HOME/go
     
-    # Find the source directory - use current working directory if go.mod exists
+    # Find the source directory
     if [[ -f "$(pwd)/go.mod" ]]; then
         SOURCE_DIR="$(pwd)"
         log_info "Using current directory: $SOURCE_DIR"
     else
-        # Search for go.mod in parent directories
         CURRENT_DIR="$(pwd)"
         SOURCE_DIR=""
         while [[ "$CURRENT_DIR" != "/" ]]; do
@@ -322,11 +329,10 @@ build_and_install_oceanproxy() {
 install_config() {
     log_info "Installing configuration files..."
     
-    # Get the source directory (same logic as build function)
+    # Get the source directory
     if [[ -f "$(pwd)/go.mod" ]]; then
         SOURCE_DIR="$(pwd)"
     else
-        # Search for go.mod in parent directories
         CURRENT_DIR="$(pwd)"
         SOURCE_DIR=""
         while [[ "$CURRENT_DIR" != "/" ]]; do
@@ -417,27 +423,8 @@ EOF
 install_systemd_service() {
     log_info "Installing systemd service..."
     
-    # Get the source directory (same logic as other functions)
-    if [[ -f "$(pwd)/go.mod" ]]; then
-        SOURCE_DIR="$(pwd)"
-    else
-        # Search for go.mod in parent directories
-        CURRENT_DIR="$(pwd)"
-        SOURCE_DIR=""
-        while [[ "$CURRENT_DIR" != "/" ]]; do
-            if [[ -f "$CURRENT_DIR/go.mod" ]]; then
-                SOURCE_DIR="$CURRENT_DIR"
-                break
-            fi
-            CURRENT_DIR="$(dirname "$CURRENT_DIR")"
-        done
-    fi
-    
-    if [[ -f "$SOURCE_DIR/deployments/systemd/oceanproxy.service" ]]; then
-        cp "$SOURCE_DIR/deployments/systemd/oceanproxy.service" /etc/systemd/system/
-    else
-        # Create systemd service file
-        cat > /etc/systemd/system/oceanproxy.service << EOF
+    # Create systemd service file
+    cat > /etc/systemd/system/oceanproxy.service << EOF
 [Unit]
 Description=OceanProxy - White-label HTTP Proxy Service
 Documentation=https://github.com/je265/oceanproxy
@@ -486,70 +473,90 @@ SyslogIdentifier=oceanproxy
 [Install]
 WantedBy=multi-user.target
 EOF
-    fi
     
     systemctl daemon-reload
     systemctl enable oceanproxy
     log_success "Systemd service installed and enabled"
 }
 
-# Configure nginx
+# Configure nginx - COMPLETELY FIXED VERSION
 configure_nginx() {
-    log_info "Configuring nginx..."
+    log_info "Configuring nginx with proper stream support..."
     
     # Backup original nginx.conf
     cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
     
-    # Check if stream module is available
-    STREAM_MODULE_AVAILABLE=false
-    if nginx -V 2>&1 | grep -q "stream"; then
-        STREAM_MODULE_AVAILABLE=true
-        log_info "Stream module is available"
-    else
-        log_warning "Stream module not available - proxy load balancing will be limited"
-    fi
-    
-    # Create basic nginx configuration
+    # Create a completely new nginx.conf with proper stream configuration
     cat > /etc/nginx/nginx.conf << 'EOF'
-user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-include /etc/nginx/modules-enabled/*.conf;
+# OceanProxy Nginx Configuration
+# Generated by installation script
 
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /run/nginx.pid;
+
+# Events block
 events {
-    worker_connections 768;
+    worker_connections 1024;
     use epoll;
     multi_accept on;
 }
 
+# HTTP block for API and management
 http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # Logging format
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+
+    # Basic settings
     sendfile on;
     tcp_nopush on;
     tcp_nodelay on;
     keepalive_timeout 65;
     types_hash_max_size 2048;
+    server_tokens off;
 
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
-
+    # Gzip compression
     gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
 
     # Default server for API
     server {
         listen 80 default_server;
-        listen [::]:80 default_server;
+        server_name _;
 
+        # Health check endpoint
         location /health {
-            proxy_pass http://127.0.0.1:8080/health;
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
         }
 
+        # API proxy to OceanProxy application
         location /api/ {
+            proxy_pass http://127.0.0.1:8080;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Timeouts
+            proxy_connect_timeout 30s;
+            proxy_send_timeout 30s;
+            proxy_read_timeout 30s;
+        }
+
+        # Legacy endpoints
+        location ~ ^/(plan|nettify)/ {
             proxy_pass http://127.0.0.1:8080;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -557,67 +564,86 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
     }
-
-    include /etc/nginx/conf.d/*.conf;
-    include /etc/nginx/sites-enabled/*;
 }
-EOF
 
-    # Add stream configuration if module is available
-    if [[ "$STREAM_MODULE_AVAILABLE" == "true" ]]; then
-        cat >> /etc/nginx/nginx.conf << 'EOF'
-
-# Stream configuration for proxy load balancing
+# Stream block for proxy load balancing - THIS IS THE KEY FIX
 stream {
-    log_format basic '$remote_addr [$time_local] '
-                     '$protocol $status $bytes_sent $bytes_received '
-                     '$session_time';
+    # Logging format for stream
+    log_format proxy '$remote_addr [$time_local] $protocol $status '
+                     '$bytes_sent $bytes_received $session_time';
 
-    # Default upstream (will be populated by OceanProxy)
-    upstream oceanproxy_default {
-        server 127.0.0.1:10001;
+    # USA region proxy (port 1337)
+    upstream oceanproxy_usa {
+        least_conn;
+        # Placeholder server - will be populated by OceanProxy
+        server 127.0.0.1:10001 backup;
     }
-
-    # Proxy ports
+    
     server {
         listen 1337;
-        proxy_pass oceanproxy_default;
-        proxy_timeout 1s;
+        proxy_pass oceanproxy_usa;
+        proxy_timeout 60s;
         proxy_responses 1;
-        access_log /var/log/nginx/proxy_1337.log basic;
+        
+        # Logging
+        access_log /var/log/nginx/usa_proxy.log proxy;
+        error_log /var/log/nginx/usa_proxy_error.log;
     }
-
+    
+    # EU region proxy (port 1338)
+    upstream oceanproxy_eu {
+        least_conn;
+        # Placeholder server - will be populated by OceanProxy
+        server 127.0.0.1:16001 backup;
+    }
+    
     server {
         listen 1338;
-        proxy_pass oceanproxy_default;
-        proxy_timeout 1s;
+        proxy_pass oceanproxy_eu;
+        proxy_timeout 60s;
         proxy_responses 1;
-        access_log /var/log/nginx/proxy_1338.log basic;
+        
+        # Logging
+        access_log /var/log/nginx/eu_proxy.log proxy;
+        error_log /var/log/nginx/eu_proxy_error.log;
     }
-
+    
+    # Alpha region proxy (port 9876)
+    upstream oceanproxy_alpha {
+        least_conn;
+        # Placeholder server - will be populated by OceanProxy
+        server 127.0.0.1:22001 backup;
+    }
+    
     server {
         listen 9876;
-        proxy_pass oceanproxy_default;
-        proxy_timeout 1s;
+        proxy_pass oceanproxy_alpha;
+        proxy_timeout 60s;
         proxy_responses 1;
-        access_log /var/log/nginx/proxy_9876.log basic;
+        
+        # Logging
+        access_log /var/log/nginx/alpha_proxy.log proxy;
+        error_log /var/log/nginx/alpha_proxy_error.log;
     }
 
-    include /etc/nginx/conf.d/*.conf;
+    # Include additional stream configurations
+    include /etc/nginx/conf.d/*.stream;
 }
 EOF
-    fi
     
     # Test nginx configuration
     if nginx -t; then
-        systemctl restart nginx
-        log_success "Nginx configured and restarted"
+        log_success "Nginx configuration test passed"
     else
         log_error "Nginx configuration test failed"
-        # Restore backup
         cp /etc/nginx/nginx.conf.backup /etc/nginx/nginx.conf
         exit 1
     fi
+    
+    # Restart nginx
+    systemctl restart nginx
+    
+    log_success "Nginx configured with stream support"
 }
 
 # Configure firewall
@@ -627,32 +653,19 @@ configure_firewall() {
     if command -v ufw &> /dev/null; then
         # Configure UFW
         ufw --force enable
-        ufw allow 22/tcp
-        ufw allow 80/tcp
-        ufw allow 443/tcp
-        ufw allow 8080/tcp
-        ufw allow 1337/tcp
-        ufw allow 1338/tcp
-        ufw allow 9876/tcp
-        ufw allow 10000:30000/tcp
+        ufw allow 22/tcp      # SSH
+        ufw allow 80/tcp      # HTTP
+        ufw allow 443/tcp     # HTTPS
+        ufw allow 8080/tcp    # OceanProxy API
+        ufw allow 1337/tcp    # USA proxy port
+        ufw allow 1338/tcp    # EU proxy port
+        ufw allow 9876/tcp    # Alpha proxy port
+        ufw allow 10000:30000/tcp  # Local proxy instance ports
         
         log_success "UFW firewall rules configured"
-    elif command -v firewall-cmd &> /dev/null; then
-        # Configure firewalld
-        firewall-cmd --permanent --add-port=22/tcp
-        firewall-cmd --permanent --add-port=80/tcp
-        firewall-cmd --permanent --add-port=443/tcp
-        firewall-cmd --permanent --add-port=8080/tcp
-        firewall-cmd --permanent --add-port=1337/tcp
-        firewall-cmd --permanent --add-port=1338/tcp
-        firewall-cmd --permanent --add-port=9876/tcp
-        firewall-cmd --permanent --add-port=10000-30000/tcp
-        firewall-cmd --reload
-        
-        log_success "Firewalld rules configured"
     else
-        log_warning "No supported firewall found. Please configure manually:"
-        log_info "Allow ports: 22, 80, 443, 8080, 1337, 1338, 9876, 10000-30000"
+        log_warning "UFW not found. Please configure firewall manually:"
+        log_info "Required ports: 22, 80, 443, 8080, 1337, 1338, 9876, 10000-30000"
     fi
 }
 
@@ -683,6 +696,18 @@ $LOG_DIR/*.log {
     notifempty
     create 644 $APP_USER $APP_USER
 }
+
+/var/log/nginx/*proxy*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    postrotate
+        systemctl reload nginx
+    endscript
+}
 EOF
     
     log_success "Log rotation configured"
@@ -703,7 +728,7 @@ EOF
     # Optimize network settings
     cat >> /etc/sysctl.conf << EOF
 
-# OceanProxy optimizations
+# OceanProxy network optimizations
 net.core.somaxconn = 65536
 net.ipv4.tcp_max_syn_backlog = 65536
 net.ipv4.tcp_keepalive_time = 600
@@ -745,6 +770,14 @@ start_services() {
         journalctl -u oceanproxy --no-pager -n 20
         exit 1
     fi
+    
+    # Verify nginx is running
+    if systemctl is-active --quiet nginx; then
+        log_success "Nginx service running"
+    else
+        log_warning "Nginx service not running - attempting to start..."
+        systemctl start nginx
+    fi
 }
 
 # Display installation summary
@@ -753,51 +786,76 @@ display_summary() {
     
     log_success "🌊 OceanProxy installation completed successfully!"
     echo
-    echo "Configuration:"
-    echo "  - Application directory: $APP_DIR"
-    echo "  - Configuration directory: $CONFIG_DIR" 
-    echo "  - Log directory: $LOG_DIR"
-    echo "  - Data directory: $DATA_DIR"
+    echo "================================"
+    echo "OCEANPROXY INSTALLATION SUMMARY"
+    echo "================================"
     echo
-    echo "Services:"
+    echo "📁 Installation Directories:"
+    echo "  - Application: $APP_DIR"
+    echo "  - Configuration: $CONFIG_DIR" 
+    echo "  - Logs: $LOG_DIR"
+    echo "  - Data: $DATA_DIR"
+    echo
+    echo "🔧 Services Status:"
     echo "  - OceanProxy: $(systemctl is-active oceanproxy)"
     echo "  - Nginx: $(systemctl is-active nginx)"
     echo "  - Redis: $(systemctl is-active redis-server 2>/dev/null || systemctl is-active redis)"
     echo
+    echo "🌐 Network Endpoints:"
+    echo "  - API Server: http://$SERVER_IP:8080"
+    echo "  - Health Check: http://$SERVER_IP:8080/health"
+    echo "  - USA Proxy Port: $SERVER_IP:1337"
+    echo "  - EU Proxy Port: $SERVER_IP:1338"
+    echo "  - Alpha Proxy Port: $SERVER_IP:9876"
+    echo
     echo "🚨 CRITICAL NEXT STEPS:"
-    echo "  1. Edit $CONFIG_DIR/oceanproxy.env with your settings:"
-    echo "     - Set secure BEARER_TOKEN and JWT_SECRET"
-    echo "     - Add your PROXIES_FO_API_KEY and NETTIFY_API_KEY"
-    echo "     - Update PROXY_DOMAIN to your domain"
+    echo "================================"
+    echo "1. 📝 CONFIGURE ENVIRONMENT:"
+    echo "   sudo nano $CONFIG_DIR/oceanproxy.env"
+    echo "   - Set secure BEARER_TOKEN (32+ characters)"
+    echo "   - Set secure JWT_SECRET"
+    echo "   - Add your PROXIES_FO_API_KEY"
+    echo "   - Add your NETTIFY_API_KEY"
+    echo "   - Update PROXY_DOMAIN to your domain"
     echo
-    echo "  2. Restart the service after configuration:"
-    echo "     sudo systemctl restart oceanproxy"
+    echo "2. 🔄 RESTART AFTER CONFIGURATION:"
+    echo "   sudo systemctl restart oceanproxy"
     echo
-    echo "  3. Test the installation:"
-    echo "     curl http://localhost:8080/health"
-    echo "     curl http://$SERVER_IP:8080/health"
+    echo "3. ✅ TEST INSTALLATION:"
+    echo "   curl http://localhost:8080/health"
+    echo "   # Should return: {\"status\":\"healthy\"}"
     echo
-    echo "  4. Create your first customer:"
-    echo "     curl -X POST http://localhost:8080/api/v1/plans \\"
-    echo "       -H \"Authorization: Bearer YOUR_TOKEN\" \\"
-    echo "       -H \"Content-Type: application/json\" \\"
-    echo "       -d '{\"customer_id\":\"test\",\"plan_type\":\"residential\",\"provider\":\"proxies_fo\",\"region\":\"usa\",\"username\":\"testuser\",\"password\":\"testpass\",\"bandwidth\":10}'"
+    echo "4. 🎯 CREATE FIRST CUSTOMER:"
+    echo "   curl -X POST http://localhost:8080/api/v1/plans \\"
+    echo "     -H \"Authorization: Bearer YOUR_TOKEN\" \\"
+    echo "     -H \"Content-Type: application/json\" \\"
+    echo "     -d '{\"customer_id\":\"test\",\"plan_type\":\"residential\",\"provider\":\"proxies_fo\",\"region\":\"usa\",\"username\":\"testuser\",\"password\":\"testpass\",\"bandwidth\":10}'"
     echo
-    echo "📚 Documentation:"
-    echo "  - README: https://github.com/je265/oceanproxy"
-    echo "  - API Docs: http://$SERVER_IP:8080/docs"
-    echo "  - Support: support@oceanproxy.io"
-    echo
-    echo "🔧 Useful Commands:"
+    echo "📋 USEFUL COMMANDS:"
+    echo "================================"
     echo "  - View logs: sudo journalctl -u oceanproxy -f"
     echo "  - Restart service: sudo systemctl restart oceanproxy"
     echo "  - Check status: sudo systemctl status oceanproxy"
     echo "  - Edit config: sudo nano $CONFIG_DIR/oceanproxy.env"
+    echo "  - Test nginx: sudo nginx -t"
+    echo "  - View nginx logs: sudo tail -f /var/log/nginx/error.log"
+    echo
+    echo "🔗 DOCUMENTATION & SUPPORT:"
+    echo "================================"
+    echo "  - GitHub: https://github.com/je265/oceanproxy"
+    echo "  - API Docs: http://$SERVER_IP:8080/docs"
+    echo "  - Support: support@oceanproxy.io"
+    echo
+    echo "⚡ ARCHITECTURE OVERVIEW:"
+    echo "Customer -> nginx:outbound_port -> 3proxy:local_port -> upstream_provider"
+    echo "Example: Customer -> nginx:1337 -> 3proxy:10001 -> pr-us.proxies.fo:13337"
+    echo
+    log_success "Installation complete! Configure your environment and restart the service."
 }
 
 # Main installation function
 main() {
-    log_info "🌊 Starting OceanProxy installation..."
+    log_info "🌊 Starting OceanProxy complete structural installation..."
     
     check_root
     detect_os
