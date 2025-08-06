@@ -264,17 +264,37 @@ build_and_install_oceanproxy() {
     export PATH=$PATH:/usr/local/go/bin
     export GOPATH=$HOME/go
     
-    # Build the application
-    cd "$(dirname "$(dirname "$(readlink -f "$0")")")" || {
-        log_error "Cannot find OceanProxy source directory"
-        exit 1
-    }
+    # Find the source directory - use current working directory if go.mod exists
+    if [[ -f "$(pwd)/go.mod" ]]; then
+        SOURCE_DIR="$(pwd)"
+        log_info "Using current directory: $SOURCE_DIR"
+    else
+        # Search for go.mod in parent directories
+        CURRENT_DIR="$(pwd)"
+        SOURCE_DIR=""
+        while [[ "$CURRENT_DIR" != "/" ]]; do
+            if [[ -f "$CURRENT_DIR/go.mod" ]]; then
+                SOURCE_DIR="$CURRENT_DIR"
+                break
+            fi
+            CURRENT_DIR="$(dirname "$CURRENT_DIR")"
+        done
+        
+        if [[ -z "$SOURCE_DIR" ]]; then
+            log_error "Could not find go.mod file. Make sure you're in the OceanProxy directory"
+            exit 1
+        fi
+        
+        log_info "Found source directory: $SOURCE_DIR"
+    fi
+    
+    cd "$SOURCE_DIR"
     
     log_info "Building OceanProxy from source..."
     
     # Ensure go.mod exists and download dependencies
     if [[ ! -f go.mod ]]; then
-        log_error "go.mod not found. Make sure you're in the OceanProxy directory"
+        log_error "go.mod not found in $SOURCE_DIR"
         exit 1
     fi
     
@@ -302,18 +322,13 @@ build_and_install_oceanproxy() {
 install_config() {
     log_info "Installing configuration files..."
     
-    # Find the source directory (same logic as build function)
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SOURCE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-    
-    # Try to find go.mod to confirm correct source directory
+    # Get the source directory (same logic as build function)
     if [[ -f "$(pwd)/go.mod" ]]; then
         SOURCE_DIR="$(pwd)"
-    elif [[ -f "$SOURCE_DIR/go.mod" ]]; then
-        : # SOURCE_DIR is correct
     else
         # Search for go.mod in parent directories
         CURRENT_DIR="$(pwd)"
+        SOURCE_DIR=""
         while [[ "$CURRENT_DIR" != "/" ]]; do
             if [[ -f "$CURRENT_DIR/go.mod" ]]; then
                 SOURCE_DIR="$CURRENT_DIR"
@@ -391,7 +406,7 @@ EOF
     if [[ -d "$SOURCE_DIR/scripts" ]]; then
         cp -r "$SOURCE_DIR/scripts" "$APP_DIR/"
         chown -R "$APP_USER:$APP_USER" "$APP_DIR/scripts"
-        chmod +x "$APP_DIR/scripts"/**/*.sh
+        find "$APP_DIR/scripts" -name "*.sh" -exec chmod +x {} \;
     fi
     
     log_success "Configuration files installed"
@@ -402,18 +417,13 @@ EOF
 install_systemd_service() {
     log_info "Installing systemd service..."
     
-    # Find the source directory (same logic as other functions)
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SOURCE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-    
-    # Try to find go.mod to confirm correct source directory
+    # Get the source directory (same logic as other functions)
     if [[ -f "$(pwd)/go.mod" ]]; then
         SOURCE_DIR="$(pwd)"
-    elif [[ -f "$SOURCE_DIR/go.mod" ]]; then
-        : # SOURCE_DIR is correct
     else
         # Search for go.mod in parent directories
         CURRENT_DIR="$(pwd)"
+        SOURCE_DIR=""
         while [[ "$CURRENT_DIR" != "/" ]]; do
             if [[ -f "$CURRENT_DIR/go.mod" ]]; then
                 SOURCE_DIR="$CURRENT_DIR"
