@@ -132,50 +132,196 @@ EOF
     log_success "Nginx with stream module installed"
 }
 
-# Install 3proxy from source - IMPROVED VERSION
+# Install 3proxy from source - ROBUST VERSION WITH MULTIPLE FALLBACKS
 install_3proxy() {
     log_info "Installing 3proxy from source..."
     
     # Check if 3proxy is already installed
     if command -v 3proxy &> /dev/null; then
-        log_info "3proxy already installed: $(3proxy 2>&1 | head -1 || echo 'version unknown')"
+        local version_info=$(3proxy 2>&1 | head -1 || echo 'version unknown')
+        log_info "3proxy already installed: $version_info"
         return
     fi
     
     # Install build dependencies
-    apt-get install -y build-essential
+    log_info "Installing build dependencies..."
+    apt-get install -y build-essential wget curl
     
-    # Create temporary directory
-    TEMP_DIR=$(mktemp -d)
-    cd "$TEMP_DIR"
+    # Create temporary directory with better error handling
+    local TEMP_DIR
+    TEMP_DIR=$(mktemp -d) || {
+        log_error "Failed to create temporary directory"
+        exit 1
+    }
     
-    # Download 3proxy source
-    log_info "Downloading 3proxy source..."
-    if ! wget -q https://github.com/3proxy/3proxy/archive/0.9.4.tar.gz -O 3proxy.tar.gz; then
-        log_error "Failed to download 3proxy source"
+    local original_dir=$(pwd)
+    cd "$TEMP_DIR" || {
+        log_error "Failed to change to temporary directory"
+        exit 1
+    }
+    
+    log_info "Working in temporary directory: $TEMP_DIR"
+    
+    # Try multiple download methods and sources
+    local downloaded=false
+    local archive_file=""
+    
+    # Method 1: Try GitHub releases (more reliable)
+    log_info "Attempting to download 3proxy from GitHub releases..."
+    if wget --timeout=30 --tries=3 -q "https://github.com/3proxy/3proxy/archive/refs/tags/0.9.4.tar.gz" -O "3proxy-0.9.4.tar.gz"; then
+        archive_file="3proxy-0.9.4.tar.gz"
+        downloaded=true
+        log_info "Downloaded from GitHub releases"
+    fi
+    
+    # Method 2: Try alternative GitHub URL if first failed
+    if [[ "$downloaded" == false ]]; then
+        log_info "Trying alternative GitHub URL..."
+        if wget --timeout=30 --tries=3 -q "https://github.com/z3APA3A/3proxy/archive/0.9.4.tar.gz" -O "3proxy-alt.tar.gz"; then
+            archive_file="3proxy-alt.tar.gz"
+            downloaded=true
+            log_info "Downloaded from alternative GitHub URL"
+        fi
+    fi
+    
+    # Method 3: Try using curl if wget failed
+    if [[ "$downloaded" == false ]]; then
+        log_info "Trying with curl..."
+        if curl -L --connect-timeout 30 --max-time 120 -s "https://github.com/3proxy/3proxy/archive/refs/tags/0.9.4.tar.gz" -o "3proxy-curl.tar.gz" && [[ -s "3proxy-curl.tar.gz" ]]; then
+            archive_file="3proxy-curl.tar.gz"
+            downloaded=true
+            log_info "Downloaded using curl"
+        fi
+    fi
+    
+    # Method 4: Try pre-compiled binary as last resort
+    if [[ "$downloaded" == false ]]; then
+        log_warning "Source download failed, trying pre-compiled binary..."
+        if wget --timeout=30 --tries=3 -q "https://github.com/3proxy/3proxy/releases/download/0.9.4/3proxy-0.9.4.x86_64.deb" -O "3proxy.deb"; then
+            log_info "Downloaded pre-compiled package"
+            if dpkg -i 3proxy.deb 2>/dev/null; then
+                log_success "3proxy installed from pre-compiled package"
+                cd "$original_dir"
+                rm -rf "$TEMP_DIR"
+                return
+            else
+                log_warning "Pre-compiled package installation failed, falling back to manual method"
+            fi
+        fi
+    fi
+    
+    if [[ "$downloaded" == false ]]; then
+        log_error "All download methods failed. Trying package manager as last resort..."
+        cd "$original_dir"
+        rm -rf "$TEMP_DIR"
+        
+        # Try package manager installation
+        if apt-get update && apt-get install -y 3proxy; then
+            log_success "3proxy installed via package manager"
+            return
+        else
+            log_error "Failed to install 3proxy via all methods"
+            log_error "Please install 3proxy manually or check your internet connection"
+            exit 1
+        fi
+    fi
+    
+    # Extract the archive
+    log_info "Extracting 3proxy source from: $archive_file"
+    if ! tar -xzf "$archive_file" 2>/dev/null; then
+        log_error "Failed to extract 3proxy archive"
+        cd "$original_dir"
+        rm -rf "$TEMP_DIR"
         exit 1
     fi
     
-    # Extract and build
-    tar -xzf 3proxy.tar.gz
-    cd 3proxy-0.9.4
+    # Find the extracted directory (handle different archive structures)
+    local source_dir=""
+    for dir in 3proxy-* */; do
+        if [[ -d "$dir" && -f "$dir/Makefile.Linux" ]]; then
+            source_dir="$dir"
+            break
+        fi
+    done
     
-    # Build 3proxy
-    log_info "Building 3proxy..."
-    make -f Makefile.Linux
+    if [[ -z "$source_dir" ]]; then
+        # Try looking for Makefile in current directory
+        if [[ -f "Makefile.Linux" ]]; then
+            source_dir="."
+        else
+            log_error "Could not find 3proxy source directory with Makefile.Linux"
+            cd "$original_dir"
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+    fi
+    
+    cd "$source_dir" || {
+        log_error "Failed to enter source directory: $source_dir"
+        cd "$original_dir"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    }
+    
+    log_info "Building 3proxy from source directory: $source_dir"
+    
+    # Build 3proxy with error handling
+    if ! make -f Makefile.Linux; then
+        log_error "Failed to build 3proxy"
+        log_info "Trying alternative build method..."
+        
+        # Try simpler build
+        if ! make; then
+            log_error "All build methods failed"
+            cd "$original_dir"
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+    fi
+    
+    # Find the compiled binary
+    local binary_path=""
+    for path in bin/3proxy src/3proxy 3proxy; do
+        if [[ -x "$path" ]]; then
+            binary_path="$path"
+            break
+        fi
+    done
+    
+    if [[ -z "$binary_path" ]]; then
+        log_error "Could not find compiled 3proxy binary"
+        cd "$original_dir"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+    
+    log_info "Found 3proxy binary at: $binary_path"
     
     # Install binary
-    cp bin/3proxy /usr/local/bin/
+    cp "$binary_path" /usr/local/bin/3proxy || {
+        log_error "Failed to copy 3proxy binary"
+        cd "$original_dir"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    }
+    
     chmod +x /usr/local/bin/3proxy
     
     # Create symlink for compatibility
     ln -sf /usr/local/bin/3proxy /usr/bin/3proxy
     
     # Clean up
-    cd /
+    cd "$original_dir"
     rm -rf "$TEMP_DIR"
     
-    log_success "3proxy installed: $(/usr/local/bin/3proxy 2>&1 | head -1 || echo 'installed')"
+    # Verify installation
+    if command -v 3proxy &> /dev/null; then
+        local version_check=$(/usr/local/bin/3proxy 2>&1 | head -1 || echo 'installed successfully')
+        log_success "3proxy installed successfully: $version_check"
+    else
+        log_error "3proxy installation verification failed"
+        exit 1
+    fi
 }
 
 # Create system user and directories
