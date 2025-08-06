@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/je265/oceanproxy/internal/app"
 	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/pkg/logger"
@@ -41,23 +43,23 @@ func main() {
 	}
 
 	// Initialize logger
-	logger := logger.New(cfg.Logger.Level, cfg.Logger.Format)
-	defer logger.Sync()
+	zapLogger := logger.New(cfg.Logger.Level, cfg.Logger.Format)
+	defer zapLogger.Sync()
 
 	// Create application
-	application, err := app.New(cfg, logger)
+	application, err := app.New(cfg, zapLogger)
 	if err != nil {
-		logger.Fatal("Failed to create application", "error", err)
+		zapLogger.Fatal("Failed to create application", zap.Error(err))
 	}
 
 	// Start server
 	go func() {
-		logger.Info("Starting OceanProxy API server",
-			"port", cfg.Server.Port,
-			"env", cfg.Environment,
+		zapLogger.Info("Starting OceanProxy API server",
+			zap.Int("port", cfg.Server.Port),
+			zap.String("env", cfg.Environment),
 		)
 		if err := application.Start(); err != nil {
-			logger.Fatal("Server failed to start", "error", err)
+			zapLogger.Fatal("Server failed to start", zap.Error(err))
 		}
 	}()
 
@@ -66,15 +68,15 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info("Shutting down server...")
+	zapLogger.Info("Shutting down server...")
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := application.Shutdown(ctx); err != nil {
-		logger.Error("Server forced to shutdown", "error", err)
+		zapLogger.Error("Server forced to shutdown", zap.Error(err))
 	}
 
-	logger.Info("Server exited")
+	zapLogger.Info("Server exited")
 }

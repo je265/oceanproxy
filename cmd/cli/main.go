@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/domain"
 	"github.com/je265/oceanproxy/internal/pkg/logger"
 	"github.com/je265/oceanproxy/internal/repository"
-	"github.com/je265/oceanproxy/internal/repository/json"
+	jsonRepo "github.com/je265/oceanproxy/internal/repository/json"
 	"github.com/je265/oceanproxy/internal/service"
 )
 
@@ -24,7 +25,6 @@ const version = "1.0.0"
 func main() {
 	var (
 		showVersion = flag.Bool("version", false, "Show version information")
-		configFile  = flag.String("config", "configs/config.yaml", "Configuration file path")
 		command     = flag.String("command", "", "Command to execute")
 		verbose     = flag.Bool("verbose", false, "Enable verbose output")
 	)
@@ -55,12 +55,12 @@ func main() {
 	log := logger.New(logLevel, "console")
 
 	// Initialize repositories
-	planRepo := json.NewPlanRepository(cfg.Database.DSN, log)
-	instanceRepo := json.NewInstanceRepository(cfg.Database.DSN, log)
+	planRepo := jsonRepo.NewPlanRepository(cfg.Database.DSN, log)
+	instanceRepo := jsonRepo.NewInstanceRepository(cfg.Database.DSN, log)
 
 	// Initialize services
 	providerService := service.NewProviderService(cfg, log)
-	proxyService := service.NewProxyService(cfg, log, instanceRepo)
+	proxyService := service.NewProxyService(cfg, log, instanceRepo, planRepo)
 
 	// Execute command
 	switch *command {
@@ -101,7 +101,6 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  -version          Show version information")
-	fmt.Println("  -config string    Configuration file path (default: configs/config.yaml)")
 	fmt.Println("  -verbose          Enable verbose output")
 	fmt.Println()
 	fmt.Println("Commands:")
