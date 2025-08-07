@@ -269,7 +269,7 @@ func setDefaults() {
 
 	// Database defaults
 	viper.SetDefault("database.driver", "json")
-	viper.SetDefault("database.dsn", "/var/log/oceanproxy/proxies.json")
+	viper.SetDefault("database.dsn", "/var/lib/oceanproxy/data/proxies.json") // ADD THIS LINE
 	viper.SetDefault("database.max_open_conns", 25)
 	viper.SetDefault("database.max_idle_conns", 25)
 	viper.SetDefault("database.conn_max_lifetime", "5m")
