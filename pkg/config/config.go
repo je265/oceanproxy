@@ -289,7 +289,7 @@ func setDefaults() {
 	viper.SetDefault("auth.token_ttl", "24h")
 
 	// Provider defaults
-	viper.SetDefault("providers.proxies_fo.base_url", "https://api.proxies.fo")
+	viper.SetDefault("providers.proxies_fo.base_url", "https://app.proxies.fo")
 	viper.SetDefault("providers.proxies_fo.timeout", "30s")
 	viper.SetDefault("providers.nettify.base_url", "https://api.nettify.xyz")
 	viper.SetDefault("providers.nettify.timeout", "30s")
