@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,9 +36,9 @@ func NewProxiesFoProvider(cfg *config.ProxiesFoConfig, logger *zap.Logger) *Prox
 
 // ProxiesFoResponse represents the API response from Proxies.fo
 type ProxiesFoResponse struct {
-	Success bool          `json:"Success"`
-	Data    ProxiesFoData `json:"Data"`
-	Error   string        `json:"Error"`
+	Success bool            `json:"Success"`
+	Data    []ProxiesFoData `json:"Data"` // Changed to slice to handle array
+	Error   string          `json:"Error"`
 }
 
 type ProxiesFoData struct {
@@ -113,8 +114,20 @@ func (p *ProxiesFoProvider) CreateAccount(ctx context.Context, req *domain.Creat
 	}
 	defer resp.Body.Close()
 
+	// Read the response body for debugging and parsing
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	p.logger.Debug("Raw API response", zap.String("body", string(body)))
+
 	var result ProxiesFoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
+		p.logger.Error("Failed to decode response",
+			zap.String("raw_response", string(body)),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -126,8 +139,16 @@ func (p *ProxiesFoProvider) CreateAccount(ctx context.Context, req *domain.Creat
 		return nil, fmt.Errorf("Proxies.fo API error: %s", result.Error)
 	}
 
+	// Check if we have data
+	if len(result.Data) == 0 {
+		return nil, fmt.Errorf("no data returned from Proxies.fo API")
+	}
+
+	// Use the first item from the data array
+	data := result.Data[0]
+
 	// Determine the correct upstream host based on response
-	upstreamHost := result.Data.AuthHostname
+	upstreamHost := data.AuthHostname
 	if upstreamHost == "" {
 		// Fallback based on plan type and region
 		if req.PlanType == "datacenter" {
@@ -143,11 +164,11 @@ func (p *ProxiesFoProvider) CreateAccount(ctx context.Context, req *domain.Creat
 	}
 
 	account := &ProviderAccount{
-		ID:       result.Data.ID,
-		Username: result.Data.AuthUsername,
-		Password: result.Data.AuthPassword,
+		ID:       data.ID,
+		Username: data.AuthUsername,
+		Password: data.AuthPassword,
 		Host:     upstreamHost,
-		Port:     int(result.Data.AuthPort),
+		Port:     int(data.AuthPort),
 		Region:   req.Region,
 	}
 
