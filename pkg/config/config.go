@@ -93,6 +93,9 @@ type Proxy struct {
 
 // Load loads configuration from files and environment variables
 func Load() (*Config, error) {
+	// CRITICAL: Load environment file FIRST before any viper operations
+	loadEnvFile()
+
 	// Initialize viper
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -102,7 +105,7 @@ func Load() (*Config, error) {
 	viper.AddConfigPath("/etc/oceanproxy")
 	viper.AddConfigPath(".")
 
-	// Set defaults first
+	// Set defaults
 	setDefaults()
 
 	// Read config file (ignore if not found)
@@ -114,9 +117,6 @@ func Load() (*Config, error) {
 	} else {
 		fmt.Printf("Using config file: %s\n", viper.ConfigFileUsed())
 	}
-
-	// CRITICAL FIX: Load environment file manually first
-	loadEnvFile()
 
 	// Setup environment variable handling
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -166,36 +166,42 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
-// loadEnvFile manually loads the environment file
+// loadEnvFile manually loads the environment file with priority order
 func loadEnvFile() {
+	// Priority order: system location first, then local fallbacks
 	envPaths := []string{
-		"/etc/oceanproxy/oceanproxy.env",
-		"./oceanproxy.env",
-		"./.env",
+		"/etc/oceanproxy/oceanproxy.env", // System location (highest priority)
+		"./oceanproxy.env",               // Current directory
+		"./.env",                         // Standard .env file
 	}
 
 	for _, path := range envPaths {
-		if _, err := os.Stat(path); err == nil {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			fmt.Printf("📄 Loading environment file: %s\n", path)
-			loadEnvFromFile(path)
-			return
+			if loadEnvFromFile(path) {
+				return // Stop after successfully loading the first found file
+			}
 		}
 	}
 
-	fmt.Println("⚠️  No environment file found")
+	fmt.Println("⚠️  No environment file found in any of the expected locations:")
+	for _, path := range envPaths {
+		fmt.Printf("   - %s\n", path)
+	}
 }
 
 // loadEnvFromFile reads and sets environment variables from a file
-func loadEnvFromFile(filename string) {
+func loadEnvFromFile(filename string) bool {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Printf("❌ Error reading env file %s: %v\n", filename, err)
-		return
+		return false
 	}
 
+	loadedCount := 0
 	// Parse and set environment variables
 	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
+	for lineNum, line := range lines {
 		line = strings.TrimSpace(line)
 
 		// Skip empty lines and comments
@@ -205,26 +211,44 @@ func loadEnvFromFile(filename string) {
 
 		// Parse KEY=VALUE
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
+		if len(parts) != 2 {
+			fmt.Printf("⚠️  Skipping invalid line %d in %s: %s\n", lineNum+1, filename, line)
+			continue
+		}
 
-			// Remove quotes if present
-			if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
-				value = strings.Trim(value, "\"")
-			}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
 
-			// Set environment variable
-			if err := os.Setenv(key, value); err == nil {
-				// Only show first few characters for security
-				displayValue := value
-				if len(value) > 8 {
-					displayValue = value[:8] + "..."
-				}
-				fmt.Printf("   %s=%s\n", key, displayValue)
+		// Remove quotes if present
+		if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+			(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+			value = value[1 : len(value)-1]
+		}
+
+		// Set environment variable only if not already set
+		if os.Getenv(key) == "" {
+			if err := os.Setenv(key, value); err != nil {
+				fmt.Printf("❌ Error setting env var %s: %v\n", key, err)
+				continue
 			}
+			loadedCount++
+
+			// Show masked value for security
+			displayValue := value
+			if len(value) > 8 && (strings.Contains(strings.ToLower(key), "secret") ||
+				strings.Contains(strings.ToLower(key), "token") ||
+				strings.Contains(strings.ToLower(key), "key") ||
+				strings.Contains(strings.ToLower(key), "password")) {
+				displayValue = value[:4] + "****" + value[len(value)-4:]
+			}
+			fmt.Printf("   %s=%s\n", key, displayValue)
+		} else {
+			fmt.Printf("   %s already set (skipping)\n", key)
 		}
 	}
+
+	fmt.Printf("✅ Loaded %d environment variables from %s\n", loadedCount, filename)
+	return true
 }
 
 // setDefaults sets default configuration values
@@ -260,6 +284,8 @@ func setDefaults() {
 	viper.SetDefault("logger.format", "json")
 
 	// Auth defaults
+	viper.SetDefault("auth.bearer_token", "simple123")
+	viper.SetDefault("auth.jwt_secret", "0153c4b35f43569b0591350011a38efdcbdd460f11fb6fe6687ae6504b0aa982")
 	viper.SetDefault("auth.token_ttl", "24h")
 
 	// Provider defaults
