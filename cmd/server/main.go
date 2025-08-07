@@ -1,23 +1,25 @@
+// cmd/server/main.go - FIXED with proper error handling and graceful shutdown
 package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/je265/oceanproxy/internal/app"
-	"github.com/je265/oceanproxy/internal/config"
-	"github.com/je265/oceanproxy/internal/pkg/logger"
+	"github.com/je265/oceanproxy/pkg/config"
+	"github.com/je265/oceanproxy/pkg/logger"
 )
 
 // @title OceanProxy API
 // @version 1.0
-// @description Whitelabel HTTP Proxy Service API
+// @description Complete White-label HTTP Proxy Service API
 // @termsOfService https://oceanproxy.io/terms
 
 // @contact.name API Support
@@ -36,6 +38,15 @@ import (
 // @description Type "Bearer" followed by a space and JWT token.
 
 func main() {
+	// Build information (injected during build)
+	var (
+		Version   = "1.0.0"
+		BuildTime = "unknown"
+		GitCommit = "unknown"
+	)
+
+	fmt.Printf("🌊 OceanProxy v%s (built %s, commit %s)\n", Version, BuildTime, GitCommit)
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -44,7 +55,24 @@ func main() {
 
 	// Initialize logger
 	zapLogger := logger.New(cfg.Logger.Level, cfg.Logger.Format)
-	defer zapLogger.Sync()
+	defer func() {
+		if err := zapLogger.Sync(); err != nil {
+			// Ignore sync errors on stdout/stderr
+		}
+	}()
+
+	zapLogger.Info("Starting OceanProxy",
+		zap.String("version", Version),
+		zap.String("environment", cfg.Environment),
+		zap.String("host", cfg.Server.Host),
+		zap.Int("port", cfg.Server.Port),
+		zap.String("bearer_token_set", func() string {
+			if cfg.Auth.BearerToken != "" {
+				return "yes"
+			}
+			return "no"
+		}()),
+	)
 
 	// Create application
 	application, err := app.New(cfg, zapLogger)
@@ -52,18 +80,26 @@ func main() {
 		zapLogger.Fatal("Failed to create application", zap.Error(err))
 	}
 
-	// Start server
+	// Create HTTP server
+	server := &http.Server{
+		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Handler:      application.Router(),
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+	}
+
+	// Start server in a goroutine
 	go func() {
-		zapLogger.Info("Starting OceanProxy API server",
-			zap.Int("port", cfg.Server.Port),
-			zap.String("env", cfg.Environment),
+		zapLogger.Info("HTTP server starting",
+			zap.String("addr", server.Addr),
 		)
-		if err := application.Start(); err != nil {
+
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			zapLogger.Fatal("Server failed to start", zap.Error(err))
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown
+	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -71,12 +107,12 @@ func main() {
 	zapLogger.Info("Shutting down server...")
 
 	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
 
-	if err := application.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(ctx); err != nil {
 		zapLogger.Error("Server forced to shutdown", zap.Error(err))
+	} else {
+		zapLogger.Info("Server exited gracefully")
 	}
-
-	zapLogger.Info("Server exited")
 }

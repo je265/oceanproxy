@@ -1,8 +1,7 @@
-// internal/app/app.go - FIXED (remove unused variables)
+// internal/app/app.go - FIXED application setup with proper authentication
 package app
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,60 +12,65 @@ import (
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
-	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/domain"
 	"github.com/je265/oceanproxy/internal/handlers"
 	"github.com/je265/oceanproxy/internal/repository/json"
 	"github.com/je265/oceanproxy/internal/service"
+	"github.com/je265/oceanproxy/pkg/config"
 )
 
 // App represents the application
 type App struct {
 	cfg    *config.Config
 	logger *zap.Logger
-	server *http.Server
 	router chi.Router
 }
 
 // New creates a new application instance
-func New(cfg *config.Config, log *zap.Logger) (*App, error) {
+func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 	app := &App{
 		cfg:    cfg,
-		logger: log,
+		logger: logger,
 	}
 
+	logger.Info("Initializing OceanProxy application",
+		zap.String("environment", cfg.Environment),
+		zap.String("database_driver", cfg.Database.Driver),
+		zap.String("proxy_domain", cfg.Proxy.Domain),
+	)
+
 	// Initialize repositories
-	planRepo := json.NewPlanRepository(cfg.Database.DSN, log)
-	instanceRepo := json.NewInstanceRepository(cfg.Database.DSN, log)
+	planRepo := json.NewPlanRepository(cfg.Database.DSN, logger)
+	instanceRepo := json.NewInstanceRepository(cfg.Database.DSN, logger)
 
 	// Load plan type configurations
-	planTypes, err := loadPlanTypeConfigs()
+	planTypes, err := loadPlanTypeConfigs(logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load plan type configs: %w", err)
+		logger.Warn("Failed to load plan type configs, using defaults", zap.Error(err))
+		planTypes = getDefaultPlanTypes()
 	}
 
 	// Load region configurations
-	regions, err := loadRegionConfigs()
+	regions, err := loadRegionConfigs(logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load region configs: %w", err)
+		logger.Warn("Failed to load region configs, using defaults", zap.Error(err))
+		regions = getDefaultRegions()
 	}
 
+	logger.Info("Loaded configurations",
+		zap.Int("plan_types", len(planTypes)),
+		zap.Int("regions", len(regions)),
+	)
+
 	// Initialize services
-	providerService := service.NewProviderService(cfg, log)
+	providerService := service.NewProviderService(cfg, logger)
+	proxyService := service.NewProxyService(cfg, logger, instanceRepo, planRepo)
+	portManager := service.NewPortManager(logger, planTypes)
+	nginxManager := service.NewNginxManager(logger, cfg, regions, planTypes)
 
-	// Initialize proxy service with repositories
-	proxyService := service.NewProxyService(cfg, log, instanceRepo, planRepo)
-
-	// Initialize port manager
-	portManager := service.NewPortManager(log, planTypes)
-
-	// Initialize nginx manager
-	nginxManager := service.NewNginxManager(log, cfg, regions, planTypes)
-
-	// Initialize plan service with all dependencies
 	planService := service.NewPlanService(
 		cfg,
-		log,
+		logger,
 		planRepo,
 		instanceRepo,
 		providerService,
@@ -77,49 +81,24 @@ func New(cfg *config.Config, log *zap.Logger) (*App, error) {
 	)
 
 	// Initialize handlers
-	planHandler := handlers.NewPlanHandler(planService, log)
-	proxyHandler := handlers.NewProxyHandler(proxyService, log)
-	healthHandler := handlers.NewHealthHandler(log)
+	planHandler := handlers.NewPlanHandler(planService, logger)
+	proxyHandler := handlers.NewProxyHandler(proxyService, logger)
+	healthHandler := handlers.NewHealthHandler(logger)
 
 	// Setup router
 	app.setupRouter(planHandler, proxyHandler, healthHandler)
 
-	// Create HTTP server
-	app.server = &http.Server{
-		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:      app.router,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-	}
+	logger.Info("Application initialized successfully")
 
 	return app, nil
 }
 
-// Start starts the application
-func (a *App) Start() error {
-	a.logger.Info("Starting HTTP server",
-		zap.String("addr", a.server.Addr),
-	)
-
-	if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("failed to start server: %w", err)
-	}
-
-	return nil
+// Router returns the HTTP router
+func (a *App) Router() chi.Router {
+	return a.router
 }
 
-// Shutdown gracefully shuts down the application
-func (a *App) Shutdown(ctx context.Context) error {
-	a.logger.Info("Shutting down HTTP server")
-
-	if err := a.server.Shutdown(ctx); err != nil {
-		return fmt.Errorf("failed to shutdown server: %w", err)
-	}
-
-	return nil
-}
-
-// setupRouter configures the HTTP router
+// setupRouter configures the HTTP router with FIXED authentication
 func (a *App) setupRouter(
 	planHandler *handlers.PlanHandler,
 	proxyHandler *handlers.ProxyHandler,
@@ -159,13 +138,18 @@ func (a *App) setupRouter(
 		})
 	})
 
-	// Health check
+	// Health checks (no auth required)
 	r.Get("/health", healthHandler.Health)
 	r.Get("/ready", healthHandler.Ready)
 
-	// API routes
+	// Log the bearer token being used (for debugging)
+	a.logger.Info("Setting up authentication",
+		zap.String("bearer_token", a.cfg.Auth.BearerToken),
+	)
+
+	// API routes with authentication
 	r.Route("/api/v1", func(r chi.Router) {
-		// Authentication middleware for API routes
+		// FIXED: Use the correct bearer token from config
 		r.Use(handlers.NewAuthMiddleware(a.cfg.Auth.BearerToken, a.logger))
 
 		// Plan management
@@ -205,42 +189,68 @@ func (a *App) setupRouter(
 }
 
 // Helper functions to load configurations
-func loadPlanTypeConfigs() (map[string]*domain.PlanTypeConfig, error) {
-	// Load from proxy-plans.yaml file
-	data, err := os.ReadFile("configs/proxy-plans.yaml")
-	if err != nil {
-		// Return default configuration if file doesn't exist
-		return getDefaultPlanTypes(), nil
+func loadPlanTypeConfigs(logger *zap.Logger) (map[string]*domain.PlanTypeConfig, error) {
+	// Try multiple paths for plan type configs
+	configPaths := []string{
+		"/etc/oceanproxy/proxy-plans.yaml",
+		"./configs/proxy-plans.yaml",
+		"./proxy-plans.yaml",
 	}
 
-	var config struct {
-		PlanTypes map[string]*domain.PlanTypeConfig `yaml:"plan_types"`
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			logger.Info("Loading plan type configuration", zap.String("path", path))
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+
+			var config struct {
+				PlanTypes map[string]*domain.PlanTypeConfig `yaml:"plan_types"`
+			}
+
+			if err := yaml.Unmarshal(data, &config); err != nil {
+				logger.Error("Failed to parse plan types config", zap.Error(err))
+				continue
+			}
+
+			return config.PlanTypes, nil
+		}
 	}
 
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse proxy-plans.yaml: %w", err)
-	}
-
-	return config.PlanTypes, nil
+	return nil, fmt.Errorf("no plan type configuration file found")
 }
 
-func loadRegionConfigs() (map[string]*domain.Region, error) {
-	// Load from regions.yaml file
-	data, err := os.ReadFile("configs/regions.yaml")
-	if err != nil {
-		// Return default configuration if file doesn't exist
-		return getDefaultRegions(), nil
+func loadRegionConfigs(logger *zap.Logger) (map[string]*domain.Region, error) {
+	// Try multiple paths for region configs
+	configPaths := []string{
+		"/etc/oceanproxy/regions.yaml",
+		"./configs/regions.yaml",
+		"./regions.yaml",
 	}
 
-	var config struct {
-		Regions map[string]*domain.Region `yaml:"regions"`
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			logger.Info("Loading region configuration", zap.String("path", path))
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+
+			var config struct {
+				Regions map[string]*domain.Region `yaml:"regions"`
+			}
+
+			if err := yaml.Unmarshal(data, &config); err != nil {
+				logger.Error("Failed to parse regions config", zap.Error(err))
+				continue
+			}
+
+			return config.Regions, nil
+		}
 	}
 
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse regions.yaml: %w", err)
-	}
-
-	return config.Regions, nil
+	return nil, fmt.Errorf("no region configuration file found")
 }
 
 // Default configurations

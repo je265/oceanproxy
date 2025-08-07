@@ -5,9 +5,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/domain"
 	"github.com/je265/oceanproxy/internal/service/provider"
+	"github.com/je265/oceanproxy/pkg/config"
 )
 
 type providerService struct {

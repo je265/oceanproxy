@@ -12,12 +12,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/domain"
-	"github.com/je265/oceanproxy/internal/pkg/logger"
 	"github.com/je265/oceanproxy/internal/repository"
 	jsonRepo "github.com/je265/oceanproxy/internal/repository/json"
 	"github.com/je265/oceanproxy/internal/service"
+	"github.com/je265/oceanproxy/pkg/config"
+	"github.com/je265/oceanproxy/pkg/logger"
 )
 
 const version = "1.0.0"

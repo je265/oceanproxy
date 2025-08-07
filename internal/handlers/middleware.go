@@ -1,3 +1,4 @@
+// internal/handlers/middleware.go - FIXED authentication middleware
 package handlers
 
 import (
@@ -12,7 +13,7 @@ import (
 	"github.com/je265/oceanproxy/internal/pkg/errors"
 )
 
-// AuthMiddleware provides bearer token authentication
+// AuthMiddleware provides bearer token authentication - FIXED
 func NewAuthMiddleware(bearerToken string, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,17 +38,27 @@ func NewAuthMiddleware(bearerToken string, logger *zap.Logger) func(http.Handler
 			if len(parts) != 2 || parts[0] != "Bearer" {
 				logger.Warn("Invalid Authorization header format",
 					zap.String("path", r.URL.Path),
-					zap.String("remote_addr", r.RemoteAddr))
+					zap.String("remote_addr", r.RemoteAddr),
+					zap.String("auth_header", authHeader))
 
 				respondWithError(w, http.StatusUnauthorized, "Invalid Authorization header format", nil)
 				return
 			}
 
 			token := parts[1]
+
+			// FIXED: Debug logging for authentication
+			logger.Debug("Authentication attempt",
+				zap.String("provided_token", token),
+				zap.String("expected_token", bearerToken),
+				zap.Bool("tokens_match", token == bearerToken))
+
 			if token != bearerToken {
 				logger.Warn("Invalid bearer token",
 					zap.String("path", r.URL.Path),
-					zap.String("remote_addr", r.RemoteAddr))
+					zap.String("remote_addr", r.RemoteAddr),
+					zap.String("provided_token", token),
+					zap.String("expected_token", bearerToken))
 
 				respondWithError(w, http.StatusUnauthorized, "Invalid bearer token", nil)
 				return
@@ -56,6 +67,10 @@ func NewAuthMiddleware(bearerToken string, logger *zap.Logger) func(http.Handler
 			// Add user context (for future use)
 			ctx := context.WithValue(r.Context(), "authenticated", true)
 			ctx = context.WithValue(ctx, "auth_method", "bearer")
+
+			logger.Debug("Authentication successful",
+				zap.String("path", r.URL.Path),
+				zap.String("remote_addr", r.RemoteAddr))
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

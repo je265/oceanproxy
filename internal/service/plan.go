@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/je265/oceanproxy/internal/config"
 	"github.com/je265/oceanproxy/internal/domain"
 	"github.com/je265/oceanproxy/internal/repository"
+	"github.com/je265/oceanproxy/pkg/config"
 )
 
 type planService struct {
