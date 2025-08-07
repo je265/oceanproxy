@@ -13,7 +13,7 @@ import (
 	"github.com/je265/oceanproxy/internal/pkg/errors"
 )
 
-// AuthMiddleware provides bearer token authentication - TEMPORARILY ACCEPTS ANY TOKEN
+// AuthMiddleware provides bearer token authentication - FIXED
 func NewAuthMiddleware(bearerToken string, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,30 +47,28 @@ func NewAuthMiddleware(bearerToken string, logger *zap.Logger) func(http.Handler
 
 			token := parts[1]
 
-			// TEMPORARY: Accept any non-empty bearer token for development
-			if token == "" {
-				logger.Warn("Empty bearer token",
-					zap.String("path", r.URL.Path),
-					zap.String("remote_addr", r.RemoteAddr))
+			// FIXED: Debug logging for authentication
+			logger.Debug("Authentication attempt",
+				zap.String("provided_token", token),
+				zap.String("expected_token", bearerToken),
+				zap.Bool("tokens_match", token == bearerToken))
 
-				respondWithError(w, http.StatusUnauthorized, "Bearer token cannot be empty", nil)
+			if token != bearerToken {
+				logger.Warn("Invalid bearer token",
+					zap.String("path", r.URL.Path),
+					zap.String("remote_addr", r.RemoteAddr),
+					zap.String("provided_token", token),
+					zap.String("expected_token", bearerToken))
+
+				respondWithError(w, http.StatusUnauthorized, "Invalid bearer token", nil)
 				return
 			}
-
-			// TEMPORARY: Log token acceptance but don't validate
-			logger.Info("⚠️  TEMPORARY: Accepting any bearer token for development",
-				zap.String("path", r.URL.Path),
-				zap.String("remote_addr", r.RemoteAddr),
-				zap.String("provided_token", token),
-				zap.String("configured_token", bearerToken),
-				zap.Bool("tokens_match", token == bearerToken))
 
 			// Add user context (for future use)
 			ctx := context.WithValue(r.Context(), "authenticated", true)
 			ctx = context.WithValue(ctx, "auth_method", "bearer")
-			ctx = context.WithValue(ctx, "bearer_token", token)
 
-			logger.Debug("Authentication successful (temporary mode)",
+			logger.Debug("Authentication successful",
 				zap.String("path", r.URL.Path),
 				zap.String("remote_addr", r.RemoteAddr))
 
