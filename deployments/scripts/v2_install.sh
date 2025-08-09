@@ -66,53 +66,84 @@ log_highlight() {
 # Check component status
 check_component_status() {
     # Check system dependencies
-    if dpkg -l | grep -q "build-essential\|curl\|wget\|git"; then
+    if command -v curl &> /dev/null && command -v wget &> /dev/null && command -v git &> /dev/null; then
         COMPONENT_STATUS["system_deps"]="installed"
+    else
+        COMPONENT_STATUS["system_deps"]="not_installed"
     fi
     
     # Check nginx
     if command -v nginx &> /dev/null && nginx -V 2>&1 | grep -q "with-stream"; then
         COMPONENT_STATUS["nginx"]="installed"
+    else
+        COMPONENT_STATUS["nginx"]="not_installed"
     fi
     
     # Check 3proxy
-    if command -v 3proxy &> /dev/null; then
+    if command -v 3proxy &> /dev/null || [[ -f "/usr/local/bin/3proxy" ]]; then
         COMPONENT_STATUS["3proxy"]="installed"
+    else
+        COMPONENT_STATUS["3proxy"]="not_installed"
     fi
     
     # Check Go
-    if command -v go &> /dev/null; then
+    if command -v go &> /dev/null && go version &> /dev/null; then
         COMPONENT_STATUS["go"]="installed"
+    elif [[ -f "/usr/local/go/bin/go" ]] && /usr/local/go/bin/go version &> /dev/null; then
+        COMPONENT_STATUS["go"]="installed"
+    else
+        COMPONENT_STATUS["go"]="not_installed"
     fi
     
     # Check user and directories
-    if id "$APP_USER" &>/dev/null && [[ -d "$APP_DIR" ]]; then
+    if id "$APP_USER" &>/dev/null && [[ -d "$APP_DIR" ]] && [[ -d "$CONFIG_DIR" ]]; then
         COMPONENT_STATUS["user_dirs"]="installed"
+    else
+        COMPONENT_STATUS["user_dirs"]="not_installed"
     fi
     
     # Check OceanProxy binary
-    if [[ -f "/usr/local/bin/oceanproxy" ]]; then
+    if [[ -f "/usr/local/bin/oceanproxy" ]] && [[ -x "/usr/local/bin/oceanproxy" ]]; then
         COMPONENT_STATUS["oceanproxy"]="installed"
+    else
+        COMPONENT_STATUS["oceanproxy"]="not_installed"
     fi
     
     # Check configuration
-    if [[ -f "$CONFIG_DIR/oceanproxy.env" ]]; then
+    if [[ -f "$CONFIG_DIR/oceanproxy.env" ]] && [[ -f "$CONFIG_DIR/config.yaml" ]]; then
         COMPONENT_STATUS["config"]="installed"
+    else
+        COMPONENT_STATUS["config"]="not_installed"
     fi
     
     # Check systemd service
-    if systemctl list-unit-files | grep -q "oceanproxy.service"; then
+    if [[ -f "/etc/systemd/system/oceanproxy.service" ]]; then
         COMPONENT_STATUS["systemd"]="installed"
+    else
+        COMPONENT_STATUS["systemd"]="not_installed"
     fi
     
-    # Check firewall (basic check)
-    if command -v ufw &> /dev/null || command -v iptables &> /dev/null; then
+    # Check firewall configuration
+    if command -v ufw &> /dev/null; then
+        if ufw status 2>/dev/null | grep -q "Status: active" && \
+           ufw status 2>/dev/null | grep -q "8080\|1337\|1338"; then
+            COMPONENT_STATUS["firewall"]="installed"
+        else
+            COMPONENT_STATUS["firewall"]="partial"
+        fi
+    elif command -v iptables &> /dev/null; then
+        # Basic iptables check - if it exists, consider firewall as available
         COMPONENT_STATUS["firewall"]="installed"
+    else
+        COMPONENT_STATUS["firewall"]="not_installed"
     fi
     
-    # Check system optimization (basic check)
-    if grep -q "net.core.somaxconn" /etc/sysctl.conf 2>/dev/null; then
+    # Check system optimization
+    if [[ -f "/etc/sysctl.d/99-oceanproxy.conf" ]] || \
+       sysctl net.core.somaxconn 2>/dev/null | grep -q -E "(4096|65535)"; then
         COMPONENT_STATUS["optimization"]="installed"
+    else
+        COMPONENT_STATUS["optimization"]="not_installed"
     fi
 }
 
@@ -121,6 +152,7 @@ get_status_icon() {
     local status=$1
     case $status in
         "installed") echo -e "${GREEN}✅${NC}" ;;
+        "partial") echo -e "${YELLOW}⚠️${NC}" ;;
         "not_installed") echo -e "${RED}❌${NC}" ;;
         *) echo -e "${YELLOW}⚠️${NC}" ;;
     esac
@@ -199,6 +231,7 @@ show_main_menu() {
     echo -e "  ${CYAN}5)${NC} 📖 View Installation Logs"
     echo -e "  ${CYAN}6)${NC} ⚙️  Service Management"
     echo -e "  ${CYAN}7)${NC} 🗑️  Uninstall OceanProxy"
+    echo -e "  ${CYAN}8)${NC} 🔑 Configure Secrets & Env (QoL)"
     echo -e "  ${CYAN}0)${NC} 🚪 Exit"
     echo
 }
@@ -915,6 +948,82 @@ stream {
         error_log /var/log/nginx/alpha_proxy_error.log;
     }
 
+    # Additional mapped upstreams for unique subdomain ports
+    upstream oceanproxy_beta {
+        least_conn;
+        server 127.0.0.1:24001 backup;
+    }
+
+    server {
+        listen 8765;
+        proxy_pass oceanproxy_beta;
+        proxy_timeout 60s;
+        proxy_responses 1;
+
+        access_log /var/log/nginx/beta_proxy.log proxy;
+        error_log /var/log/nginx/beta_proxy_error.log;
+    }
+
+    upstream oceanproxy_datacenter {
+        least_conn;
+        server 127.0.0.1:12001 backup;
+    }
+
+    server {
+        listen 1339;
+        proxy_pass oceanproxy_datacenter;
+        proxy_timeout 60s;
+        proxy_responses 1;
+
+        access_log /var/log/nginx/datacenter_proxy.log proxy;
+        error_log /var/log/nginx/datacenter_proxy_error.log;
+    }
+
+    upstream oceanproxy_isp {
+        least_conn;
+        server 127.0.0.1:14001 backup;
+    }
+
+    server {
+        listen 1340;
+        proxy_pass oceanproxy_isp;
+        proxy_timeout 60s;
+        proxy_responses 1;
+
+        access_log /var/log/nginx/isp_proxy.log proxy;
+        error_log /var/log/nginx/isp_proxy_error.log;
+    }
+
+    upstream oceanproxy_mobile {
+        least_conn;
+        server 127.0.0.1:26001 backup;
+    }
+
+    server {
+        listen 7654;
+        proxy_pass oceanproxy_mobile;
+        proxy_timeout 60s;
+        proxy_responses 1;
+
+        access_log /var/log/nginx/mobile_proxy.log proxy;
+        error_log /var/log/nginx/mobile_proxy_error.log;
+    }
+
+    upstream oceanproxy_unlimited {
+        least_conn;
+        server 127.0.0.1:28001 backup;
+    }
+
+    server {
+        listen 6543;
+        proxy_pass oceanproxy_unlimited;
+        proxy_timeout 60s;
+        proxy_responses 1;
+
+        access_log /var/log/nginx/unlimited_proxy.log proxy;
+        error_log /var/log/nginx/unlimited_proxy_error.log;
+    }
+
     include /etc/nginx/conf.d/*.stream;
 }
 EOF
@@ -944,6 +1053,10 @@ configure_firewall() {
         ufw allow 1337/tcp    # USA proxy port
         ufw allow 1338/tcp    # EU proxy port
         ufw allow 9876/tcp    # Alpha proxy port
+        ufw allow 8765/tcp    # Beta proxy port
+        ufw allow 1339/tcp    # Datacenter proxy port
+        ufw allow 7654/tcp    # Mobile proxy port
+        ufw allow 6543/tcp    # Unlimited proxy port
         ufw allow 10000:30000/tcp  # Local proxy instance ports
         
         COMPONENT_STATUS["firewall"]="installed"
@@ -1290,7 +1403,7 @@ test_installation() {
     
     # Test 4: Check proxy ports
     echo -e "${CYAN}Test 4: Proxy Ports${NC}"
-    for port in 1337 1338 9876; do
+    for port in 1337 1338 9876 7777; do
         if netstat -ln 2>/dev/null | grep -q ":$port "; then
             echo "  ✅ Port $port is listening"
         else
@@ -1499,7 +1612,11 @@ display_installation_summary() {
     echo -e "  • Health Check: ${CYAN}http://$SERVER_IP:8080/health${NC}"
     echo -e "  • USA Proxy Port: ${CYAN}$SERVER_IP:1337${NC}"
     echo -e "  • EU Proxy Port: ${CYAN}$SERVER_IP:1338${NC}"
+    echo -e "  • Datacenter Proxy Port: ${CYAN}$SERVER_IP:1339${NC}"
     echo -e "  • Alpha Proxy Port: ${CYAN}$SERVER_IP:9876${NC}"
+    echo -e "  • Beta Proxy Port: ${CYAN}$SERVER_IP:8765${NC}"
+    echo -e "  • Mobile Proxy Port: ${CYAN}$SERVER_IP:7654${NC}"
+    echo -e "  • Unlimited Proxy Port: ${CYAN}$SERVER_IP:6543${NC}"
     echo
     
     echo -e "${WHITE}🚨 CRITICAL NEXT STEPS:${NC}"
@@ -1528,6 +1645,196 @@ display_installation_summary() {
     read -p "Press Enter to return to main menu..."
 }
 
+# Configure secrets and environment variables
+verify_env_file() {
+    clear
+    echo -e "${CYAN}╔════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${WHITE}         CONFIGURE SECRETS & ENVIRONMENT        ${CYAN}║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════╝${NC}"
+    echo
+    
+    local env_file="$CONFIG_DIR/oceanproxy.env"
+    
+    if [[ ! -f "$env_file" ]]; then
+        log_warning "Environment file not found. Creating $env_file..."
+        mkdir -p "$CONFIG_DIR"
+        cat > "$env_file" << 'EOF'
+# OceanProxy Environment Configuration
+BEARER_TOKEN=simple123
+JWT_SECRET=your-jwt-secret-here
+PROXIES_FO_API_KEY=your-proxies-fo-api-key
+NETTIFY_API_KEY=your-nettify-api-key
+PROXY_DOMAIN=oceanproxy.io
+DATABASE_URL=postgres://oceanproxy:password@localhost:5432/oceanproxy
+REDIS_URL=redis://localhost:6379
+LOG_LEVEL=info
+EOF
+        chown "$APP_USER:$APP_USER" "$env_file"
+        chmod 600 "$env_file"
+    fi
+    
+    echo -e "${WHITE}Current environment file status:${NC}"
+    echo -e "  • Location: ${CYAN}$env_file${NC}"
+    echo -e "  • Permissions: ${CYAN}$(stat -c '%a' "$env_file" 2>/dev/null || echo 'N/A')${NC}"
+    echo
+    
+    # Check for weak tokens
+    local bearer_token=$(grep "^BEARER_TOKEN=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    local jwt_secret=$(grep "^JWT_SECRET=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    
+    echo -e "${WHITE}Security Check:${NC}"
+    if [[ "$bearer_token" == "simple123" || ${#bearer_token} -lt 32 ]]; then
+        echo -e "  • Bearer Token: ${RED}WEAK/DEFAULT${NC} (should be 32+ chars)"
+        echo -e "    Current: ${YELLOW}$bearer_token${NC}"
+        echo
+        read -p "Generate secure 64-char bearer token? (y/n): " gen_bearer
+        if [[ "$gen_bearer" =~ ^[Yy]$ ]]; then
+            local new_bearer=$(openssl rand -hex 32)
+            sed -i "s/^BEARER_TOKEN=.*/BEARER_TOKEN=$new_bearer/" "$env_file"
+            echo -e "    ${GREEN}✓ Generated new bearer token${NC}"
+        fi
+    else
+        echo -e "  • Bearer Token: ${GREEN}SECURE${NC}"
+    fi
+    
+    if [[ "$jwt_secret" == "your-jwt-secret-here" || ${#jwt_secret} -lt 32 ]]; then
+        echo -e "  • JWT Secret: ${RED}WEAK/DEFAULT${NC} (should be 32+ chars)"
+        echo
+        read -p "Generate secure 64-char JWT secret? (y/n): " gen_jwt
+        if [[ "$gen_jwt" =~ ^[Yy]$ ]]; then
+            local new_jwt=$(openssl rand -hex 32)
+            sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$new_jwt/" "$env_file"
+            echo -e "    ${GREEN}✓ Generated new JWT secret${NC}"
+        fi
+    else
+        echo -e "  • JWT Secret: ${GREEN}SECURE${NC}"
+    fi
+    
+    echo
+    echo -e "${WHITE}Provider API Keys:${NC}"
+    
+    # Check Proxies.fo API key
+    local proxies_key=$(grep "^PROXIES_FO_API_KEY=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    if [[ "$proxies_key" == "your-proxies-fo-api-key" || -z "$proxies_key" ]]; then
+        echo -e "  • Proxies.fo: ${RED}NOT CONFIGURED${NC}"
+        read -p "Enter your Proxies.fo API key (or press Enter to skip): " new_proxies_key
+        if [[ -n "$new_proxies_key" ]]; then
+            sed -i "s/^PROXIES_FO_API_KEY=.*/PROXIES_FO_API_KEY=$new_proxies_key/" "$env_file"
+            echo -e "    ${GREEN}✓ Updated Proxies.fo API key${NC}"
+        fi
+    else
+        echo -e "  • Proxies.fo: ${GREEN}CONFIGURED${NC}"
+    fi
+    
+    # Check Nettify API key
+    local nettify_key=$(grep "^NETTIFY_API_KEY=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    if [[ "$nettify_key" == "your-nettify-api-key" || -z "$nettify_key" ]]; then
+        echo -e "  • Nettify: ${RED}NOT CONFIGURED${NC}"
+        read -p "Enter your Nettify API key (or press Enter to skip): " new_nettify_key
+        if [[ -n "$new_nettify_key" ]]; then
+            sed -i "s/^NETTIFY_API_KEY=.*/NETTIFY_API_KEY=$new_nettify_key/" "$env_file"
+            echo -e "    ${GREEN}✓ Updated Nettify API key${NC}"
+        fi
+    else
+        echo -e "  • Nettify: ${GREEN}CONFIGURED${NC}"
+    fi
+    
+    echo
+    echo -e "${WHITE}Domain Configuration:${NC}"
+    local proxy_domain=$(grep "^PROXY_DOMAIN=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    echo -e "  • Proxy Domain: ${CYAN}$proxy_domain${NC}"
+    read -p "Update proxy domain? (current: $proxy_domain) [Enter to keep]: " new_domain
+    if [[ -n "$new_domain" ]]; then
+        sed -i "s/^PROXY_DOMAIN=.*/PROXY_DOMAIN=$new_domain/" "$env_file"
+        echo -e "    ${GREEN}✓ Updated proxy domain${NC}"
+    fi
+    
+    echo
+    echo -e "${GREEN}✓ Environment configuration completed${NC}"
+    read -p "Press Enter to continue..."
+}
+
+# Test provider connectivity
+provider_connectivity_test() {
+    clear
+    echo -e "${CYAN}╔════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${WHITE}           PROVIDER CONNECTIVITY TEST           ${CYAN}║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════╝${NC}"
+    echo
+    
+    local env_file="$CONFIG_DIR/oceanproxy.env"
+    
+    if [[ ! -f "$env_file" ]]; then
+        log_error "Environment file not found: $env_file"
+        read -p "Press Enter to continue..."
+        return 1
+    fi
+    
+    # Source the environment file
+    source "$env_file"
+    
+    echo -e "${WHITE}Testing Proxies.fo API connectivity...${NC}"
+    if [[ -n "$PROXIES_FO_API_KEY" && "$PROXIES_FO_API_KEY" != "your-proxies-fo-api-key" ]]; then
+        local proxies_response=$(curl -s -H "X-Api-Auth: $PROXIES_FO_API_KEY" https://app.proxies.fo/api/me)
+        if echo "$proxies_response" | grep -q '"Success":true'; then
+            echo -e "  ${GREEN}✓ Proxies.fo API: Connected${NC}"
+            local balance=$(echo "$proxies_response" | grep -o '"BalanceFormatted":"[^"]*"' | cut -d'"' -f4)
+            echo -e "    Balance: ${CYAN}$balance${NC}"
+        else
+            echo -e "  ${RED}✗ Proxies.fo API: Failed${NC}"
+            echo -e "    Response: ${YELLOW}$proxies_response${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}⚠ Proxies.fo API key not configured${NC}"
+    fi
+    
+    echo
+    echo -e "${WHITE}Testing Nettify API connectivity...${NC}"
+    if [[ -n "$NETTIFY_API_KEY" && "$NETTIFY_API_KEY" != "your-nettify-api-key" ]]; then
+        local nettify_response=$(curl -s -H "Authorization: Bearer $NETTIFY_API_KEY" https://api.nettify.xyz/balance)
+        if echo "$nettify_response" | grep -q '"balance":'; then
+            echo -e "  ${GREEN}✓ Nettify API: Connected${NC}"
+            local balance=$(echo "$nettify_response" | grep -o '"balance":[0-9.]*' | cut -d':' -f2)
+            echo -e "    Balance: ${CYAN}\$${balance}${NC}"
+        else
+            echo -e "  ${RED}✗ Nettify API: Failed${NC}"
+            echo -e "    Response: ${YELLOW}$nettify_response${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}⚠ Nettify API key not configured${NC}"
+    fi
+    
+    echo
+    echo -e "${WHITE}Testing OceanProxy API...${NC}"
+    if systemctl is-active --quiet oceanproxy; then
+        local health_response=$(curl -s http://localhost:8080/ready 2>/dev/null)
+        if echo "$health_response" | grep -q '"status":"ready"'; then
+            echo -e "  ${GREEN}✓ OceanProxy API: Running${NC}"
+            # Show database status
+            if echo "$health_response" | grep -q '"database":{"status":"healthy"'; then
+                echo -e "    Database: ${GREEN}✓ Healthy${NC}"
+            else
+                echo -e "    Database: ${YELLOW}⚠ Check required${NC}"
+            fi
+            # Show provider status
+            if echo "$health_response" | grep -q '"providers":{"status":"healthy"'; then
+                echo -e "    Providers: ${GREEN}✓ Healthy${NC}"
+            else
+                echo -e "    Providers: ${YELLOW}⚠ Check required${NC}"
+            fi
+        else
+            echo -e "  ${RED}✗ OceanProxy API: Not responding${NC}"
+            echo -e "    Try: ${CYAN}sudo systemctl restart oceanproxy${NC}"
+        fi
+    else
+        echo -e "  ${RED}✗ OceanProxy service not running${NC}"
+        echo -e "    Try: ${CYAN}sudo systemctl start oceanproxy${NC}"
+    fi
+    
+    echo
+    read -p "Press Enter to continue..."
+}
+
 # Main program loop
 main() {
     check_root
@@ -1535,7 +1842,7 @@ main() {
     
     while true; do
         show_main_menu
-        read -p "Select option [0-7]: " choice
+        read -p "Select option [0-8]: " choice
         
         case $choice in
             1) full_installation ;;
@@ -1565,6 +1872,7 @@ main() {
                 done
                 ;;
             7) uninstall_oceanproxy ;;
+            8) verify_env_file; provider_connectivity_test ;;
             0) 
                 echo
                 log_info "Thank you for using OceanProxy installer!"

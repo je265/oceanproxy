@@ -18,6 +18,7 @@ type Provider interface {
 // ProviderAccount represents an account with an upstream provider
 type ProviderAccount struct {
 	ID       string `json:"id"`
+    CustomerID string `json:"customer_id"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Host     string `json:"host"`

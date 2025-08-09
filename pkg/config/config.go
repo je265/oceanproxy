@@ -1,16 +1,13 @@
-// pkg/config/config.go - FIXED configuration loading with proper environment handling
 package config
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
-// Config represents the complete application configuration
 type Config struct {
 	Environment string    `mapstructure:"environment"`
 	Server      Server    `mapstructure:"server"`
@@ -22,7 +19,6 @@ type Config struct {
 	Proxy       Proxy     `mapstructure:"proxy"`
 }
 
-// Server configuration
 type Server struct {
 	Port            int           `mapstructure:"port"`
 	Host            string        `mapstructure:"host"`
@@ -91,170 +87,88 @@ type Proxy struct {
 	NginxConfDir string `mapstructure:"nginx_conf_dir"`
 }
 
-// Load loads configuration from files and environment variables
-func Load() (*Config, error) {
-	// CRITICAL: Load environment file FIRST before any viper operations
-	loadEnvFile()
+// getenvTrimBraces resolves values like ${VAR} from environment
+func getenvTrimBraces(s string) string {
+    if len(s) < 4 { // minimal ${x}
+        return ""
+    }
+    key := strings.TrimSuffix(strings.TrimPrefix(s, "${"), "}")
+    if key == "" {
+        return ""
+    }
+    if val := strings.TrimSpace(strings.ReplaceAll(viper.GetString(key), "\n", "")); val != "" {
+        return val
+    }
+    // Fallback to real env
+    if val := strings.TrimSpace(strings.ReplaceAll(getenv(key), "\n", "")); val != "" {
+        return val
+    }
+    return ""
+}
 
-	// Initialize viper
+// getenv wraps lookup to allow unit testing if needed
+func getenv(key string) string { return strings.TrimSpace(strings.ReplaceAll(viper.GetViper().GetString(key), "\n", "")) }
+
+func Load() (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-
-	// Add config paths
 	viper.AddConfigPath("./configs")
-	viper.AddConfigPath("/etc/oceanproxy")
 	viper.AddConfigPath(".")
 
 	// Set defaults
 	setDefaults()
 
-	// Read config file (ignore if not found)
+	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
-		fmt.Println("No config file found, using environment variables and defaults")
-	} else {
-		fmt.Printf("Using config file: %s\n", viper.ConfigFileUsed())
 	}
 
-	// Setup environment variable handling
+    // Override with environment variables
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
-	// Override with direct environment variable reading for critical values
-	if bearerToken := os.Getenv("BEARER_TOKEN"); bearerToken != "" {
-		viper.Set("auth.bearer_token", bearerToken)
-		fmt.Printf("✅ Loaded BEARER_TOKEN from environment: %s\n", bearerToken)
-	}
+    // Explicit env bindings for common keys used in .env
+    // These allow using BEARER_TOKEN and PROXIES_FO_API_KEY, etc., without nested names
+    _ = viper.BindEnv("auth.bearer_token", "BEARER_TOKEN")
+    _ = viper.BindEnv("auth.jwt_secret", "JWT_SECRET")
+    _ = viper.BindEnv("providers.proxies_fo.api_key", "PROXIES_FO_API_KEY")
+    _ = viper.BindEnv("providers.nettify.api_key", "NETTIFY_API_KEY")
 
-	if jwtSecret := os.Getenv("JWT_SECRET"); jwtSecret != "" {
-		viper.Set("auth.jwt_secret", jwtSecret)
-		fmt.Printf("✅ Loaded JWT_SECRET from environment\n")
-	}
-
-	if proxiesFoKey := os.Getenv("PROXIES_FO_API_KEY"); proxiesFoKey != "" {
-		viper.Set("providers.proxies_fo.api_key", proxiesFoKey)
-		fmt.Printf("✅ Loaded PROXIES_FO_API_KEY from environment\n")
-	}
-
-	if nettifyKey := os.Getenv("NETTIFY_API_KEY"); nettifyKey != "" {
-		viper.Set("providers.nettify.api_key", nettifyKey)
-		fmt.Printf("✅ Loaded NETTIFY_API_KEY from environment\n")
-	}
-
-	// Unmarshal into config struct
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
+    var cfg Config
+    if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	// Validate critical configuration
-	if cfg.Auth.BearerToken == "" {
-		return nil, fmt.Errorf("BEARER_TOKEN is required but not set")
-	}
-
-	if cfg.Auth.JWTSecret == "" {
-		return nil, fmt.Errorf("JWT_SECRET is required but not set")
-	}
-
-	fmt.Printf("✅ Configuration loaded successfully\n")
-	fmt.Printf("   - Bearer Token: %s\n", cfg.Auth.BearerToken)
-	fmt.Printf("   - Environment: %s\n", cfg.Environment)
-	fmt.Printf("   - Server: %s:%d\n", cfg.Server.Host, cfg.Server.Port)
+    // Fallback expansion for ${VAR} placeholders if present in YAML
+    // Only for a few critical fields to avoid surprises
+    if strings.HasPrefix(cfg.Auth.BearerToken, "${") && strings.HasSuffix(cfg.Auth.BearerToken, "}") {
+        if val := getenvTrimBraces(cfg.Auth.BearerToken); val != "" {
+            cfg.Auth.BearerToken = val
+        }
+    }
+    if strings.HasPrefix(cfg.Auth.JWTSecret, "${") && strings.HasSuffix(cfg.Auth.JWTSecret, "}") {
+        if val := getenvTrimBraces(cfg.Auth.JWTSecret); val != "" {
+            cfg.Auth.JWTSecret = val
+        }
+    }
+    if strings.HasPrefix(cfg.Providers.ProxiesFo.APIKey, "${") && strings.HasSuffix(cfg.Providers.ProxiesFo.APIKey, "}") {
+        if val := getenvTrimBraces(cfg.Providers.ProxiesFo.APIKey); val != "" {
+            cfg.Providers.ProxiesFo.APIKey = val
+        }
+    }
+    if strings.HasPrefix(cfg.Providers.Nettify.APIKey, "${") && strings.HasSuffix(cfg.Providers.Nettify.APIKey, "}") {
+        if val := getenvTrimBraces(cfg.Providers.Nettify.APIKey); val != "" {
+            cfg.Providers.Nettify.APIKey = val
+        }
+    }
 
 	return &cfg, nil
 }
 
-// loadEnvFile manually loads the environment file with priority order
-func loadEnvFile() {
-	// Priority order: system location first, then local fallbacks
-	envPaths := []string{
-		"/etc/oceanproxy/oceanproxy.env", // System location (highest priority)
-		"./oceanproxy.env",               // Current directory
-		"./.env",                         // Standard .env file
-	}
-
-	for _, path := range envPaths {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			fmt.Printf("📄 Loading environment file: %s\n", path)
-			if loadEnvFromFile(path) {
-				return // Stop after successfully loading the first found file
-			}
-		}
-	}
-
-	fmt.Println("⚠️  No environment file found in any of the expected locations:")
-	for _, path := range envPaths {
-		fmt.Printf("   - %s\n", path)
-	}
-}
-
-// loadEnvFromFile reads and sets environment variables from a file
-func loadEnvFromFile(filename string) bool {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Printf("❌ Error reading env file %s: %v\n", filename, err)
-		return false
-	}
-
-	loadedCount := 0
-	// Parse and set environment variables
-	lines := strings.Split(string(content), "\n")
-	for lineNum, line := range lines {
-		line = strings.TrimSpace(line)
-
-		// Skip empty lines and comments
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// Parse KEY=VALUE
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			fmt.Printf("⚠️  Skipping invalid line %d in %s: %s\n", lineNum+1, filename, line)
-			continue
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Remove quotes if present
-		if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
-			(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
-			value = value[1 : len(value)-1]
-		}
-
-		// Set environment variable only if not already set
-		if os.Getenv(key) == "" {
-			if err := os.Setenv(key, value); err != nil {
-				fmt.Printf("❌ Error setting env var %s: %v\n", key, err)
-				continue
-			}
-			loadedCount++
-
-			// Show masked value for security
-			displayValue := value
-			if len(value) > 8 && (strings.Contains(strings.ToLower(key), "secret") ||
-				strings.Contains(strings.ToLower(key), "token") ||
-				strings.Contains(strings.ToLower(key), "key") ||
-				strings.Contains(strings.ToLower(key), "password")) {
-				displayValue = value[:4] + "****" + value[len(value)-4:]
-			}
-			fmt.Printf("   %s=%s\n", key, displayValue)
-		} else {
-			fmt.Printf("   %s already set (skipping)\n", key)
-		}
-	}
-
-	fmt.Printf("✅ Loaded %d environment variables from %s\n", loadedCount, filename)
-	return true
-}
-
-// setDefaults sets default configuration values
 func setDefaults() {
 	// Server defaults
-	viper.SetDefault("environment", "development")
 	viper.SetDefault("server.port", 8080)
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.read_timeout", "30s")
@@ -274,18 +188,11 @@ func setDefaults() {
 	viper.SetDefault("database.max_idle_conns", 25)
 	viper.SetDefault("database.conn_max_lifetime", "5m")
 
-	// Redis defaults
-	viper.SetDefault("redis.addr", "localhost:6379")
-	viper.SetDefault("redis.password", "")
-	viper.SetDefault("redis.db", 0)
-
 	// Logger defaults
 	viper.SetDefault("logger.level", "info")
 	viper.SetDefault("logger.format", "json")
 
 	// Auth defaults
-	viper.SetDefault("auth.bearer_token", "simple123")
-	viper.SetDefault("auth.jwt_secret", "0153c4b35f43569b0591350011a38efdcbdd460f11fb6fe6687ae6504b0aa982")
 	viper.SetDefault("auth.token_ttl", "24h")
 
 	// Provider defaults
@@ -297,9 +204,12 @@ func setDefaults() {
 	// Proxy defaults
 	viper.SetDefault("proxy.domain", "oceanproxy.io")
 	viper.SetDefault("proxy.start_port", 10000)
-	viper.SetDefault("proxy.end_port", 30000)
+	viper.SetDefault("proxy.end_port", 20000)
 	viper.SetDefault("proxy.config_dir", "/etc/3proxy")
 	viper.SetDefault("proxy.log_dir", "/var/log/oceanproxy")
-	viper.SetDefault("proxy.script_dir", "/opt/oceanproxy/scripts")
+	viper.SetDefault("proxy.script_dir", "./scripts")
 	viper.SetDefault("proxy.nginx_conf_dir", "/etc/nginx/conf.d")
+
+	// Environment
+	viper.SetDefault("environment", "development")
 }

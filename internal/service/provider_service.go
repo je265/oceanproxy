@@ -41,7 +41,8 @@ func (s *providerService) CreateAccount(ctx context.Context, providerName string
 
 	// Convert provider.ProviderAccount to service.ProviderAccount
 	return &ProviderAccount{
-		ID:       account.ID,
+        ID:       account.ID,
+        CustomerID: account.CustomerID,
 		Username: account.Username,
 		Password: account.Password,
 		Host:     account.Host,

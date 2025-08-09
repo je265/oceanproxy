@@ -36,7 +36,7 @@ auth:
 providers:
   proxies_fo:
     api_key: ${PROXIES_FO_API_KEY}
-    base_url: https://api.proxies.fo
+    base_url: https://app.proxies.fo
     timeout: 30s
   nettify:
     api_key: ${NETTIFY_API_KEY}

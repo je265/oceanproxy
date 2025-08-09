@@ -41,13 +41,24 @@ func NewPlanHandler(planService service.PlanService, logger *zap.Logger) *PlanHa
 // @Security BearerAuth
 // @Router /plans [post]
 func (h *PlanHandler) CreatePlan(w http.ResponseWriter, r *http.Request) {
-	var req domain.CreatePlanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+    var req domain.CreatePlanRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Error("Invalid request body", zap.Error(err))
 		h.respondWithError(w, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
-
+    // Enforce provider-specific credential rules
+    if req.Provider == domain.ProviderProxiesFo {
+        // Proxies.fo generates credentials; ignore any provided values
+        req.Username = ""
+        req.Password = ""
+    } else if req.Provider == domain.ProviderNettify {
+        // Nettify requires custom username/password
+        if req.Username == "" || req.Password == "" {
+            h.respondWithError(w, http.StatusBadRequest, "username and password are required for nettify provider", nil)
+            return
+        }
+    }
 	response, err := h.planService.CreatePlan(r.Context(), &req)
 	if err != nil {
 		h.logger.Error("Failed to create plan", zap.Error(err))

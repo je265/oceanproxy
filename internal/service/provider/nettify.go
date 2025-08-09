@@ -58,17 +58,17 @@ func (n *NettifyProvider) CreateAccount(ctx context.Context, req *domain.CreateP
 		zap.String("plan_type", req.PlanType),
 	)
 
-	// Ensure username uniqueness by appending timestamp
-	username := fmt.Sprintf("%s_%d", req.Username, time.Now().Unix())
+    // Use provided username as-is (Nettify accepts custom usernames)
+    username := req.Username
 
 	var requestData map[string]interface{}
 
-	if req.PlanType == "unlimited" {
+    if req.PlanType == "unlimited" {
 		// Time-based unlimited plan
-		hours := req.Duration * 24 // Convert days to hours
-		if hours == 0 {
-			hours = 1 // Default to 1 hour
-		}
+        hours := req.Duration * 24
+        if req.Duration == 0 && hours == 0 {
+            hours = 720 // Default example 30 days
+        }
 
 		requestData = map[string]interface{}{
 			"username":       username,
@@ -76,21 +76,21 @@ func (n *NettifyProvider) CreateAccount(ctx context.Context, req *domain.CreateP
 			"plan_type":      req.PlanType,
 			"duration_hours": hours,
 		}
-	} else {
-		// Bandwidth-based plan
-		bandwidth := req.Bandwidth
-		if bandwidth == 0 {
-			bandwidth = 1 // Default to 1GB
-		}
-		bandwidthMB := bandwidth * 1024 // Convert GB to MB
+    } else {
+        // Bandwidth-based plan (residential, mobile, datacenter)
+        // The API expects bandwidth_mb directly
+        bandwidthMB := req.Bandwidth * 1024
+        if bandwidthMB == 0 {
+            bandwidthMB = 1024 // default to 1GB
+        }
 
-		requestData = map[string]interface{}{
-			"username":     username,
-			"password":     req.Password,
-			"plan_type":    req.PlanType,
-			"bandwidth_mb": bandwidthMB,
-		}
-	}
+        requestData = map[string]interface{}{
+            "username":     username,
+            "password":     req.Password,
+            "plan_type":    req.PlanType,
+            "bandwidth_mb": bandwidthMB,
+        }
+    }
 
 	jsonData, err := json.Marshal(requestData)
 	if err != nil {

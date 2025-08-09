@@ -1,4 +1,3 @@
-// pkg/logger/logger.go - Simple but complete logger implementation
 package logger
 
 import (
@@ -123,6 +122,19 @@ func NewWithFile(level, format, filePath string) (*zap.Logger, error) {
 	return logger, nil
 }
 
+// NewStructured creates a structured logger with additional fields
+func NewStructured(level, format string, fields map[string]interface{}) *zap.Logger {
+	logger := New(level, format)
+
+	// Add structured fields
+	var zapFields []zap.Field
+	for key, value := range fields {
+		zapFields = append(zapFields, zap.Any(key, value))
+	}
+
+	return logger.With(zapFields...)
+}
+
 // NewForService creates a logger specifically configured for a service
 func NewForService(serviceName, level, format string) *zap.Logger {
 	logger := New(level, format)
@@ -130,4 +142,78 @@ func NewForService(serviceName, level, format string) *zap.Logger {
 		zap.String("service", serviceName),
 		zap.String("component", "oceanproxy"),
 	)
+}
+
+// LogLevel represents available log levels
+type LogLevel string
+
+const (
+	DebugLevel LogLevel = "debug"
+	InfoLevel  LogLevel = "info"
+	WarnLevel  LogLevel = "warn"
+	ErrorLevel LogLevel = "error"
+	FatalLevel LogLevel = "fatal"
+	PanicLevel LogLevel = "panic"
+)
+
+// LogFormat represents available log formats
+type LogFormat string
+
+const (
+	JSONFormat    LogFormat = "json"
+	ConsoleFormat LogFormat = "console"
+)
+
+// Config represents logger configuration
+type Config struct {
+	Level    LogLevel               `yaml:"level" json:"level"`
+	Format   LogFormat              `yaml:"format" json:"format"`
+	FilePath string                 `yaml:"file_path,omitempty" json:"file_path,omitempty"`
+	Fields   map[string]interface{} `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// NewFromConfig creates a logger from configuration
+func NewFromConfig(config Config) (*zap.Logger, error) {
+	level := string(config.Level)
+	format := string(config.Format)
+
+	if config.FilePath != "" {
+		return NewWithFile(level, format, config.FilePath)
+	}
+
+	if len(config.Fields) > 0 {
+		return NewStructured(level, format, config.Fields), nil
+	}
+
+	return New(level, format), nil
+}
+
+// GetDefaultConfig returns default logger configuration
+func GetDefaultConfig() Config {
+	return Config{
+		Level:  InfoLevel,
+		Format: JSONFormat,
+	}
+}
+
+// GetDevelopmentConfig returns development logger configuration
+func GetDevelopmentConfig() Config {
+	return Config{
+		Level:  DebugLevel,
+		Format: ConsoleFormat,
+		Fields: map[string]interface{}{
+			"environment": "development",
+		},
+	}
+}
+
+// GetProductionConfig returns production logger configuration
+func GetProductionConfig() Config {
+	return Config{
+		Level:  InfoLevel,
+		Format: JSONFormat,
+		Fields: map[string]interface{}{
+			"environment": "production",
+		},
+	}
 }

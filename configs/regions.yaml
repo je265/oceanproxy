@@ -9,7 +9,6 @@ regions:
     description: "United States proxies"
     plan_types:
       - proxies_fo_usa_residential
-      - proxies_fo_usa_datacenter
     nginx_config_file: oceanproxy_usa.conf
     
   eu:
@@ -19,7 +18,6 @@ regions:
     description: "European Union proxies"
     plan_types:
       - proxies_fo_eu_residential
-      - proxies_fo_eu_datacenter
     nginx_config_file: oceanproxy_eu.conf
     
   alpha:
@@ -29,24 +27,50 @@ regions:
     description: "Alpha region proxies"
     plan_types:
       - nettify_alpha_residential
-      - nettify_alpha_mobile
     nginx_config_file: oceanproxy_alpha.conf
     
   # Easy to add new regions
   beta:
     subdomain: beta
     domain_suffix: oceanproxy.io
-    outbound_port: 7777
+    outbound_port: 8765
     description: "Beta region proxies"
     plan_types:
-      - newprovider_beta_premium
+      - nettify_beta_datacenter
     nginx_config_file: oceanproxy_beta.conf
     
-  # Example: Asia region
-  asia:
-    subdomain: asia
+  datacenter:
+    subdomain: datacenter
     domain_suffix: oceanproxy.io
-    outbound_port: 2337
-    description: "Asian proxies"
-    plan_types: []
-    nginx_config_file: oceanproxy_asia.conf
+    outbound_port: 1339
+    description: "Datacenter proxies"
+    plan_types:
+      - proxies_fo_datacenter
+    nginx_config_file: oceanproxy_datacenter.conf
+
+  isp:
+    subdomain: isp
+    domain_suffix: oceanproxy.io
+    outbound_port: 1340
+    description: "ISP proxies"
+    plan_types:
+      - proxies_fo_usa_isp
+    nginx_config_file: oceanproxy_isp.conf
+
+  mobile:
+    subdomain: mobile
+    domain_suffix: oceanproxy.io
+    outbound_port: 7654
+    description: "Mobile proxies"
+    plan_types:
+      - nettify_alpha_mobile
+    nginx_config_file: oceanproxy_mobile.conf
+
+  unlimited:
+    subdomain: unlim
+    domain_suffix: oceanproxy.io
+    outbound_port: 6543
+    description: "Unlimited residential proxies"
+    plan_types:
+      - nettify_alpha_unlimited
+    nginx_config_file: oceanproxy_unlimited.conf

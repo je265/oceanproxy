@@ -2,16 +2,16 @@
 package service
 
 import (
-	"context"
-	"fmt"
-	"time"
+    "context"
+    "fmt"
+    "time"
 
-	"github.com/google/uuid"
-	"go.uber.org/zap"
+    "github.com/google/uuid"
+    "go.uber.org/zap"
 
-	"github.com/je265/oceanproxy/internal/domain"
-	"github.com/je265/oceanproxy/internal/repository"
-	"github.com/je265/oceanproxy/pkg/config"
+    "github.com/je265/oceanproxy/internal/domain"
+    "github.com/je265/oceanproxy/internal/repository"
+    "github.com/je265/oceanproxy/pkg/config"
 )
 
 type planService struct {
@@ -70,10 +70,10 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 		return nil, fmt.Errorf("failed to get plan type config: %w", err)
 	}
 
-	// Create plan record
-	plan := &domain.ProxyPlan{
+    // Create plan record (username/password may be overridden by provider)
+    plan := &domain.ProxyPlan{
 		ID:          uuid.New(),
-		CustomerID:  req.CustomerID,
+        CustomerID:  req.CustomerID,
 		PlanType:    req.PlanType,
 		Provider:    req.Provider,
 		Region:      req.Region,
@@ -105,6 +105,19 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 		s.planRepo.Update(ctx, plan)
 		return nil, fmt.Errorf("failed to create provider account: %w", err)
 	}
+
+    // Use provider-generated credentials and customer association if provided
+    if providerAccount != nil {
+        if providerAccount.Username != "" {
+            plan.Username = providerAccount.Username
+        }
+        if providerAccount.Password != "" {
+            plan.Password = providerAccount.Password
+        }
+        if providerAccount.CustomerID != "" {
+            plan.CustomerID = providerAccount.CustomerID
+        }
+    }
 
 	// Allocate local port
 	localPort, err := s.portManager.AllocatePort(ctx, planTypeKey, plan.ID.String())
@@ -153,13 +166,15 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 		s.logger.Error("Failed to update plan status", zap.Error(err))
 	}
 
-	// Build response with region-specific endpoint
-	region := s.regions[req.Region]
-	if region == nil {
-		return nil, fmt.Errorf("region %s not found", req.Region)
-	}
+    // Build response with customer-facing endpoint mapping rules
+    host, port, displayRegion, err := s.resolveEndpointHostPort(req.Provider, req.PlanType, req.Region)
+    if err != nil {
+        return nil, err
+    }
 
-	response := &domain.CreatePlanResponse{
+    endpointURL := fmt.Sprintf("http://%s:%s@%s:%d", plan.Username, plan.Password, host, port)
+
+    response := &domain.CreatePlanResponse{
 		Success:   true,
 		PlanID:    plan.ID,
 		Username:  plan.Username,
@@ -167,8 +182,8 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 		ExpiresAt: plan.ExpiresAt,
 		Proxies: []domain.ProxyEndpoint{
 			{
-				URL:      region.GetProxyEndpoint(plan.Username, plan.Password),
-				Region:   region.Name,
+                URL:      endpointURL,
+                Region:   displayRegion,
 				Username: plan.Username,
 				Password: plan.Password,
 			},
@@ -183,6 +198,95 @@ func (s *planService) CreatePlan(ctx context.Context, req *domain.CreatePlanRequ
 	)
 
 	return response, nil
+}
+
+// resolveEndpointHostPort determines the customer-facing host, port, and region label
+// based on provider, plan type, and requested region.
+func (s *planService) resolveEndpointHostPort(provider, planType, reqRegion string) (string, int, string, error) {
+    switch provider {
+    case domain.ProviderProxiesFo:
+        switch planType {
+        case domain.PlanTypeResidential:
+            // usa -> usa.oceanproxy.io, eu -> eu.oceanproxy.io
+            region := s.regions[reqRegion]
+            if region == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", reqRegion)
+            }
+            return region.GetFullDomain(), region.OutboundPort, region.Name, nil
+        case domain.PlanTypeDatacenter:
+            // datacenter.oceanproxy.io with port from requested region
+            region := s.regions[reqRegion]
+            if region == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", reqRegion)
+            }
+            return "datacenter.oceanproxy.io", region.OutboundPort, "datacenter", nil
+        case domain.PlanTypeISP:
+            // isp.oceanproxy.io with port from requested region
+            region := s.regions[reqRegion]
+            if region == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", reqRegion)
+            }
+            return "isp.oceanproxy.io", region.OutboundPort, "isp", nil
+        default:
+            // fallback to requested region
+            region := s.regions[reqRegion]
+            if region == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", reqRegion)
+            }
+            return region.GetFullDomain(), region.OutboundPort, region.Name, nil
+        }
+    case domain.ProviderNettify:
+        switch planType {
+        case domain.PlanTypeResidential:
+            // alpha.oceanproxy.io (use alpha port)
+            alpha := s.regions[domain.RegionAlpha]
+            if alpha == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", domain.RegionAlpha)
+            }
+            return "alpha.oceanproxy.io", alpha.OutboundPort, "alpha", nil
+        case domain.PlanTypeDatacenter:
+            // beta.oceanproxy.io (use beta port)
+            beta := s.regions[domain.RegionBeta]
+            if beta == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", domain.RegionBeta)
+            }
+            return "beta.oceanproxy.io", beta.OutboundPort, "beta", nil
+        case domain.PlanTypeMobile:
+            // mobile.oceanproxy.io (use alpha port as base if mobile not defined)
+            // Try a region named "mobile" if present; otherwise fall back to alpha's port
+            if mobile := s.regions["mobile"]; mobile != nil {
+                return "mobile.oceanproxy.io", mobile.OutboundPort, "mobile", nil
+            }
+            alpha := s.regions[domain.RegionAlpha]
+            if alpha == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", domain.RegionAlpha)
+            }
+            return "mobile.oceanproxy.io", alpha.OutboundPort, "mobile", nil
+        case domain.PlanTypeUnlimited:
+            // unlim.oceanproxy.io (use alpha port as base if unlim not defined)
+            if unlim := s.regions["unlim"]; unlim != nil {
+                return "unlim.oceanproxy.io", unlim.OutboundPort, "unlim", nil
+            }
+            alpha := s.regions[domain.RegionAlpha]
+            if alpha == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", domain.RegionAlpha)
+            }
+            return "unlim.oceanproxy.io", alpha.OutboundPort, "unlim", nil
+        default:
+            alpha := s.regions[domain.RegionAlpha]
+            if alpha == nil {
+                return "", 0, "", fmt.Errorf("region %s not found", domain.RegionAlpha)
+            }
+            return alpha.GetFullDomain(), alpha.OutboundPort, alpha.Name, nil
+        }
+    }
+
+    // Unknown provider; default to requested region
+    region := s.regions[reqRegion]
+    if region == nil {
+        return "", 0, "", fmt.Errorf("region %s not found", reqRegion)
+    }
+    return region.GetFullDomain(), region.OutboundPort, region.Name, nil
 }
 
 func (s *planService) GetPlan(ctx context.Context, planID uuid.UUID) (*domain.ProxyPlan, error) {

@@ -51,14 +51,15 @@ type ProxyEndpoint struct {
 
 // CreatePlanRequest represents a request to create a new proxy plan
 type CreatePlanRequest struct {
-	CustomerID string `json:"customer_id" validate:"required"`
-	PlanType   string `json:"plan_type" validate:"required,oneof=residential datacenter isp mobile unlimited"`
-	Provider   string `json:"provider" validate:"required,oneof=proxies_fo nettify"`
-	Region     string `json:"region" validate:"required,oneof=usa eu alpha beta asia"`
-	Username   string `json:"username" validate:"required,min=3,max=50"`
-	Password   string `json:"password" validate:"required,min=6,max=100"`
-	Bandwidth  int    `json:"bandwidth" validate:"min=1,max=1000"`         // GB
-	Duration   int    `json:"duration,omitempty" validate:"min=1,max=365"` // days
+    CustomerID string `json:"customer_id,omitempty" validate:"omitempty"`
+    PlanType   string `json:"plan_type" validate:"required,oneof=residential datacenter isp mobile unlimited"`
+    Provider   string `json:"provider" validate:"required,oneof=proxies_fo nettify"`
+    Region     string `json:"region" validate:"required,oneof=usa eu alpha beta asia"`
+    // Username and Password are no longer accepted from API; kept for backwards-compat but ignored
+    Username  string `json:"username,omitempty" validate:"omitempty"`
+    Password  string `json:"password,omitempty" validate:"omitempty"`
+    Bandwidth int    `json:"bandwidth" validate:"min=1,max=1000"`         // GB
+    Duration  int    `json:"duration,omitempty" validate:"min=1,max=365"` // days
 }
 
 // CreatePlanResponse represents the response after creating a plan
